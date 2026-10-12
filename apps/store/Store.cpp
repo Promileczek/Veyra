@@ -3,7 +3,7 @@
 #include "../../src/core/AppWindow.h"
 #include <objbase.h>
 #include <shlobj.h>
-#include <urlmon.h>
+#include <shlwapi.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -21,7 +21,6 @@ namespace {
 constexpr UINT WM_INSTALLED_LIST = WM_APP + 20;  // lista zainstalowanych gotowa
 constexpr UINT WM_INSTALL_PROGRESS = WM_APP + 21;  // wParam: indeks, lParam: procent
 constexpr UINT WM_INSTALL_DONE = WM_APP + 22;      // wParam: indeks, lParam: kod wyjścia winget
-constexpr UINT WM_ICON_READY = WM_APP + 23;        // wParam: indeks — plik ikonki jest na dysku
 constexpr UINT_PTR kSpinTimer = 1;
 
 constexpr float kSideW = 190.f, kSearchH = 38.f, kCardW = 250.f, kCardH = 124.f, kGap = 14.f, kPad = 20.f;
@@ -95,72 +94,13 @@ std::wstring Lower(std::wstring s) {
     return s;
 }
 
-// Strona programu → ikonka (usługa ikon stron Google, 128 px) albo bezpośredni plik PNG (Wikimedia).
-// Bez wpisu: kafelek z inicjałami.
-struct Site {
-    const wchar_t* id;
-    const wchar_t* url;
-};
-const Site kSites[] = {
-    {L"Brave.Brave", L"https://brave.com"},
-    {L"Google.Chrome", L"https://commons.wikimedia.org/wiki/Special:FilePath/Google_Chrome_icon_(February_2022).svg?width=128"},
-    {L"Mozilla.Firefox", L"https://www.firefox.com"},
-    {L"Opera.OperaGX", L"https://www.opera.com/gx"},
-    {L"Discord.Discord", L"https://discord.com"},
-    {L"Telegram.TelegramDesktop", L"https://telegram.org"},
-    {L"OpenWhisperSystems.Signal", L"https://signal.org"},
-    {L"Zoom.Zoom", L"https://zoom.us"},
-    {L"Mozilla.Thunderbird", L"https://www.thunderbird.net"},
-    {L"Valve.Steam", L"https://store.steampowered.com"},
-    {L"EpicGames.EpicGamesLauncher", L"https://store.epicgames.com"},
-    {L"Blizzard.BattleNet", L"https://battle.net"},
-    {L"Ubisoft.Connect", L"https://www.ubisoft.com"},
-    {L"Spotify.Spotify", L"https://open.spotify.com"},
-    {L"VideoLAN.VLC", L"https://www.videolan.org"},
-    {L"OBSProject.OBSStudio", L"https://obsproject.com"},
-    {L"Audacity.Audacity", L"https://www.audacityteam.org"},
-    {L"ShareX.ShareX", L"https://getsharex.com"},
-    {L"7zip.7zip", L"https://www.7-zip.org"},
-    {L"RARLab.WinRAR", L"https://www.win-rar.com"},
-    {L"voidtools.Everything", L"https://www.voidtools.com"},
-    {L"qBittorrent.qBittorrent", L"https://www.qbittorrent.org"},
-    {L"AnyDesk.AnyDesk", L"https://anydesk.com"},
-    {L"TeamViewer.TeamViewer", L"https://www.teamviewer.com"},
-    {L"REALiX.HWiNFO", L"https://www.hwinfo.com"},
-    {L"CPUID.CPU-Z", L"https://www.cpuid.com"},
-    {L"Guru3D.Afterburner", L"https://www.msi.com"},
-    {L"Rufus.Rufus", L"https://rufus.ie"},
-    {L"Bitwarden.Bitwarden", L"https://bitwarden.com"},
-    {L"Microsoft.VisualStudioCode", L"https://code.visualstudio.com"},
-    {L"Notepad++.Notepad++", L"https://notepad-plus-plus.org"},
-    {L"Git.Git", L"https://git-scm.com"},
-    {L"Python.Python.3.12", L"https://www.python.org"},
-    {L"OpenJS.NodeJS.LTS", L"https://nodejs.org"},
-    {L"PuTTY.PuTTY", L"https://www.putty.org"},
-    {L"WinSCP.WinSCP", L"https://winscp.net"},
-    {L"TheDocumentFoundation.LibreOffice", L"https://www.libreoffice.org"},
-    {L"GIMP.GIMP", L"https://www.gimp.org"},
-    {L"KDE.Krita", L"https://krita.org"},
-    {L"Inkscape.Inkscape", L"https://inkscape.org"},
-    {L"dotPDN.PaintDotNet", L"https://www.getpaint.net"},
-    {L"BlenderFoundation.Blender", L"https://www.blender.org"},
-};
-
-const wchar_t* SiteFor(const wchar_t* id) {
-    for (const Site& site : kSites)
-        if (wcscmp(site.id, id) == 0) return site.url;
-    return nullptr;
-}
-
-std::wstring IconDir() {
-    PWSTR base = nullptr;
-    std::wstring dir;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base))) dir = std::wstring(base) + L"\\Exploder";
-    CoTaskMemFree(base);
-    CreateDirectoryW(dir.c_str(), nullptr);
-    dir += L"\\store-icons";
-    CreateDirectoryW(dir.c_str(), nullptr);
-    return dir;
+// Nazwa zasobu z ikonką (res/store/*.png wbudowane w exe, patrz tools/fetch_store_icons.py):
+// identyfikator winget z samymi literami i cyframi, reszta → _
+std::wstring ResourceName(const wchar_t* id) {
+    std::wstring n = std::wstring(L"I_") + id;  // przedrostek: nazwa zasobu nie może zaczynać się cyfrą (7zip)
+    for (wchar_t& c : n)
+        if (!iswalnum(c)) c = L'_';
+    return n;
 }
 
 std::wstring Initials(const wchar_t* name) {
@@ -256,24 +196,10 @@ public:
             }
             if (!closing_) PostMessageW(hwnd, WM_INSTALLED_LIST, 0, 0);
         });
-        // Ikonki: z dysku albo pobrane raz (w tle)
-        iconPaths_.resize(std::size(kApps));
+        // Ikonki z zasobów exe (bez internetu); brak ikonki → kafelek z inicjałami
         pendingIcons_.resize(std::size(kApps));
         icons_.resize(std::size(kApps));
-        const std::wstring dir = IconDir();
-        for (size_t i = 0; i < std::size(kApps); ++i) iconPaths_[i] = dir + L"\\" + kApps[i].id + L".png";
-        iconThread_ = std::thread([this, hwnd] {
-            for (size_t i = 0; i < std::size(kApps) && !closing_; ++i) {
-                const wchar_t* site = SiteFor(kApps[i].id);
-                if (!site) continue;
-                if (GetFileAttributesW(iconPaths_[i].c_str()) == INVALID_FILE_ATTRIBUTES) {
-                    const bool direct = wcsstr(site, L"wikimedia.org") != nullptr;
-                    const std::wstring url = direct ? std::wstring(site) : std::wstring(L"https://www.google.com/s2/favicons?sz=128&domain_url=") + site;
-                    if (FAILED(URLDownloadToFileW(nullptr, url.c_str(), iconPaths_[i].c_str(), 0, nullptr))) continue;
-                }
-                if (!closing_) PostMessageW(hwnd, WM_ICON_READY, i, 0);
-            }
-        });
+        for (size_t i = 0; i < std::size(kApps); ++i) pendingIcons_[i] = LoadIconResource(ResourceName(kApps[i].id));
         SetTimer(hwnd_, kSpinTimer, 50, nullptr);
         Redraw();
         return true;
@@ -285,7 +211,6 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             queue_.clear();
         }
-        if (iconThread_.joinable()) iconThread_.join();  // najwyżej jedno trwające pobranie
         if (listThread_.joinable()) listThread_.detach();  // winget export może trwać — nie blokujemy zamknięcia
         if (worker_.joinable()) worker_.detach();
     }
@@ -341,7 +266,7 @@ protected:
             dc->CreateBitmapFromWicBitmap(pendingIcons_[i].Get(), nullptr, &icons_[i]);
             pendingIcons_[i].Reset();
         }
-        if (icons_[i]) {  // czarne tło pod logo (ciemne logotypy są odwrócone przy wczytaniu)
+        if (icons_[i]) {  // czarne tło pod logo (ikonki przygotowane przez tools/fetch_store_icons.py)
             Fill(dc, tile, Rgb(0x000000), 12.f);
             brush_->SetColor(Rgb(0xFFFFFF, 0.08f));
             dc->DrawRoundedRectangle(D2D1::RoundedRect({tile.left + 0.5f, tile.top + 0.5f, tile.right - 0.5f, tile.bottom - 0.5f}, 12.f, 12.f),
@@ -491,13 +416,6 @@ protected:
                 Redraw();
             }
             return true;
-        case WM_ICON_READY:
-            if (wp < iconPaths_.size()) {
-                pendingIcons_[wp] = LoadImageFile(iconPaths_[wp]);
-                if (!pendingIcons_[wp]) DeleteFileW(iconPaths_[wp].c_str());  // uszkodzony plik — następnym razem pobierz ponownie
-                Redraw();
-            }
-            return true;
         case WM_INSTALL_DONE:
             if (wp < states_.size()) {
                 const int code = static_cast<int>(lp);
@@ -531,69 +449,24 @@ private:
         return blob.find(needle) != std::string::npos;
     }
 
-    // PNG z dysku → bitmapa WIC (32bpp PBGRA, gotowa dla Direct2D)
-    ComPtr<IWICBitmapSource> LoadImageFile(const std::wstring& path) const {
+    // PNG z zasobów exe → bitmapa WIC (32bpp PBGRA, gotowa dla Direct2D)
+    ComPtr<IWICBitmapSource> LoadIconResource(const std::wstring& name) const {
+        const HRSRC res = FindResourceW(nullptr, name.c_str(), RT_RCDATA);
+        const HGLOBAL data = res ? LoadResource(nullptr, res) : nullptr;
+        const void* bytes = data ? LockResource(data) : nullptr;
+        if (!bytes) return nullptr;
+        ComPtr<IStream> stream;
+        stream.Attach(SHCreateMemStream(static_cast<const BYTE*>(bytes), SizeofResource(nullptr, res)));
         IWICImagingFactory* wic = g_->WIC();
         ComPtr<IWICBitmapDecoder> decoder;
         ComPtr<IWICBitmapFrameDecode> frame;
         ComPtr<IWICFormatConverter> conv;
-        if (FAILED(wic->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        if (!stream || FAILED(wic->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder)) ||
             FAILED(decoder->GetFrame(0, &frame)) || FAILED(wic->CreateFormatConverter(&conv)) ||
             FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeCustom)))
             return nullptr;
-        ComPtr<IWICBitmap> bitmap;  // kopia w pamięci — plik nie zostaje otwarty
+        ComPtr<IWICBitmap> bitmap;  // kopia w pamięci
         if (FAILED(wic->CreateBitmapFromSource(conv.Get(), WICBitmapCacheOnLoad, &bitmap))) return nullptr;
-        // Ciemne, jednokolorowe logo (np. Epic, Ubisoft) zniknęłoby na czarnym tle → odwracamy kolory
-        UINT w = 0, h = 0;
-        bitmap->GetSize(&w, &h);
-        const WICRect all{0, 0, static_cast<INT>(w), static_cast<INT>(h)};
-        ComPtr<IWICBitmapLock> lock;
-        if (SUCCEEDED(bitmap->Lock(&all, WICBitmapLockRead | WICBitmapLockWrite, &lock))) {
-            UINT size = 0, stride = 0;
-            BYTE* px = nullptr;
-            lock->GetStride(&stride);
-            lock->GetDataPointer(&size, &px);
-            // Białe tło (Opera, Signal, Telegram…): jasne piksele połączone z krawędzią → przezroczyste
-            auto light = [&](UINT x, UINT y) {
-                const BYTE* p = px + y * stride + x * 4;
-                return p[3] > 0 && p[0] > 225 && p[1] > 225 && p[2] > 225;
-            };
-            std::vector<uint8_t> seen(static_cast<size_t>(w) * h, 0);
-            std::vector<std::pair<UINT, UINT>> stack;
-            for (UINT x = 0; x < w; ++x) stack.push_back({x, 0}), stack.push_back({x, h - 1});
-            for (UINT y = 0; y < h; ++y) stack.push_back({0, y}), stack.push_back({w - 1, y});
-            while (!stack.empty()) {
-                const auto [x, y] = stack.back();
-                stack.pop_back();
-                uint8_t& mark = seen[static_cast<size_t>(y) * w + x];
-                if (mark || !light(x, y)) continue;
-                mark = 1;
-                BYTE* p = px + y * stride + x * 4;
-                p[0] = p[1] = p[2] = p[3] = 0;
-                if (x > 0) stack.push_back({x - 1, y});
-                if (x + 1 < w) stack.push_back({x + 1, y});
-                if (y > 0) stack.push_back({x, y - 1});
-                if (y + 1 < h) stack.push_back({x, y + 1});
-            }
-            double lum = 0, sat = 0;
-            size_t n = 0;
-            for (UINT y = 0; y < h; ++y)
-                for (UINT x = 0; x < w; ++x) {
-                    const BYTE* p = px + y * stride + x * 4;  // B G R A (z alfą przemnożoną)
-                    if (p[3] < 160) continue;
-                    const double b = p[0] / 255.0 / (p[3] / 255.0), g = p[1] / 255.0 / (p[3] / 255.0), r = p[2] / 255.0 / (p[3] / 255.0);
-                    lum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                    sat += std::max({r, g, b}) - std::min({r, g, b});
-                    ++n;
-                }
-            if (n > 0 && lum / n < 0.28 && sat / n < 0.15)
-                for (UINT y = 0; y < h; ++y)
-                    for (UINT x = 0; x < w; ++x) {
-                        BYTE* p = px + y * stride + x * 4;
-                        for (int c = 0; c < 3; ++c) p[c] = static_cast<BYTE>(p[3] - p[c]);
-                    }
-        }
-        lock.Reset();
         return bitmap;
     }
 
@@ -689,8 +562,7 @@ private:
     float scroll_ = 0.f, spin_ = 0.f;
     bool searchFocus_ = false, listLoaded_ = false, wingetMissingShown_ = false;
 
-    std::thread listThread_, worker_, iconThread_;
-    std::vector<std::wstring> iconPaths_;
+    std::thread listThread_, worker_;
     std::vector<ComPtr<IWICBitmapSource>> pendingIcons_;
     std::vector<ComPtr<ID2D1Bitmap>> icons_;
     std::mutex mutex_;

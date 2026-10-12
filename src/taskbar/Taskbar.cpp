@@ -13,6 +13,8 @@
 namespace {
 constexpr UINT WM_APPBAR = WM_APP + 1;
 constexpr UINT WM_REDRAW = WM_APP + 2;
+constexpr UINT WM_START_KEY = WM_APP + 3;  // sam klawisz Windows (wciśnięty i puszczony bez innego klawisza)
+Taskbar* g_taskbar = nullptr;              // dla haka klawiatury
 constexpr UINT_PTR kClockTimer = 1, kFullscreenTimer = 2;
 constexpr int kHotkeyQuit = 1, kHotkeySnip = 2;
 constexpr int kNone = -1, kStart = -2, kClock = -3;  // >= 0: indeks przycisku okna
@@ -70,6 +72,9 @@ bool Taskbar::Create(HINSTANCE inst, Graphics& g) {
         }, 0);
         minimizeHook_ = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZESTART, nullptr, OnMinimize, 0, 0,
                                         WINEVENT_OUTOFCONTEXT);
+        // Klawisz Windows → menu Start (bez explorera nikt go nie obsługuje)
+        g_taskbar = this;
+        winKeyHook_ = SetWindowsHookExW(WH_KEYBOARD_LL, WinKeyHook, inst, 0);
     }
 
     APPBARDATA abd{sizeof(abd)};
@@ -390,6 +395,27 @@ void Taskbar::ToggleTrayFlyout() {
     trayFlyout_.Toggle(anchor, dpi_);
 }
 
+// Sam klawisz Windows: wciśnięty i puszczony bez innego klawisza (Win+Shift+S itp. nie otwierają menu).
+// Hak tylko obserwuje — nie zjada klawiszy, więc skróty z Win dalej działają.
+LRESULT CALLBACK Taskbar::WinKeyHook(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION && g_taskbar) {
+        const auto& k = *reinterpret_cast<const KBDLLHOOKSTRUCT*>(lp);
+        const bool down = wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN;
+        const bool win = k.vkCode == VK_LWIN || k.vkCode == VK_RWIN;
+        Taskbar& t = *g_taskbar;
+        if (win && down) {
+            if (!t.winDown_) t.winUsed_ = false;  // pierwsze wciśnięcie (nie autopowtarzanie)
+            t.winDown_ = true;
+        } else if (win) {
+            if (t.winDown_ && !t.winUsed_) PostMessageW(t.hwnd_, WM_START_KEY, 0, 0);
+            t.winDown_ = false;
+        } else if (down && t.winDown_) {
+            t.winUsed_ = true;
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
 void Taskbar::ToggleStartMenu() {
     RECT win{};
     GetWindowRect(hwnd_, &win);
@@ -665,7 +691,13 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             snip_.Start(inst_);
         }
         return 0;
+    case WM_START_KEY:
+        ToggleStartMenu();
+        return 0;
     case WM_DESTROY: {
+        if (winKeyHook_) UnhookWindowsHookEx(winKeyHook_);
+        winKeyHook_ = nullptr;
+        g_taskbar = nullptr;
         tracker_.Stop();
         HideMinimizedWindows(false);
         if (minimizeHook_) UnhookWinEvent(minimizeHook_);

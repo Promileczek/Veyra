@@ -58,7 +58,15 @@ void Popup::Toggle(const RECT& anchor, UINT dpi) {
     OnShow();
     Place();
     ShowWindow(hwnd_, SW_SHOW);
-    SetForegroundWindow(hwnd_);
+    if (!SetForegroundWindow(hwnd_) || GetForegroundWindow() != hwnd_) {
+        // Windows blokuje zmianę okna na pierwszym planie — podpięcie pod kolejkę wejścia aktywnego okna to obchodzi
+        const HWND fg = GetForegroundWindow();
+        const DWORD me = GetCurrentThreadId(), fgThread = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+        const bool attached = fgThread && fgThread != me && AttachThreadInput(me, fgThread, TRUE);
+        BringWindowToTop(hwnd_);
+        SetForegroundWindow(hwnd_);
+        if (attached) AttachThreadInput(me, fgThread, FALSE);
+    }
     Render();
 }
 

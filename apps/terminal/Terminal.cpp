@@ -1,4 +1,4 @@
-// Terminal Explodera — wygląd jak terminal Linuksa (Ubuntu): bakłażanowe tło, prompt user@host:ścieżka$, kolory Tango.
+// Terminal Explodera — w stylu terminala Linuksa: ciemne tło, prompt user@host:ścieżka$, kolory Tango.
 // Pod spodem: cmd.exe w pseudokonsoli Windows (ConPTY) + parser sekwencji VT (kursor, kasowanie, kolory 16/256/24-bit,
 // ekran alternatywny, region przewijania). Aliasy jak w Linuksie (ls, cat, grep, clear…) przez doskey.
 // Skróty: Ctrl+C (kopiuje, gdy coś zaznaczone; inaczej przerywa), Ctrl+Shift+C / Ctrl+Shift+V, Ctrl+V, PPM = kopiuj/wklej,
@@ -29,7 +29,7 @@ constexpr uint32_t kDefault = 0xFF000000;  // kolor domyślny (nie RGB)
 // Paleta Tango (terminal GNOME/Ubuntu)
 constexpr uint32_t kPalette[16] = {0x2E3436, 0xCC0000, 0x4E9A06, 0xC4A000, 0x3465A4, 0x75507B, 0x06989A, 0xD3D7CF,
                                    0x555753, 0xEF2929, 0x8AE234, 0xFCE94F, 0x729FCF, 0xAD7FA8, 0x34E2E2, 0xEEEEEC};
-constexpr uint32_t kFg = 0xEEEEEC, kBg = 0x300A24;  // bakłażan Ubuntu
+constexpr uint32_t kFg = 0xE6E6E6, kBg = 0x121318;  // neutralne ciemne tło (jak Kalkulator)
 
 uint32_t Color256(int n) {
     if (n < 16) return kPalette[n];
@@ -94,7 +94,6 @@ public:
         o.height = 540.f;
         o.minWidth = 360.f;
         o.minHeight = 200.f;
-        o.blur = true;
         titleH_ = 38.f;
         fontSize_ = static_cast<float>(_wtof(Settings::Get(L"terminalFontSize", L"14").c_str()));
         if (fontSize_ < 8.f || fontSize_ > 32.f) fontSize_ = 14.f;
@@ -112,7 +111,7 @@ public:
 protected:
     // ---------------- Rysowanie ----------------
     void Paint(ID2D1DeviceContext* dc) override {
-        dc->Clear(ToColor(kBg, 0.93f));
+        dc->Clear(ToColor(kBg));
         Fill(dc, {0.f, titleH_ - 1.f, widthDip_, titleH_}, D2D1::ColorF(1.f, 1.f, 1.f, 0.06f));
         if (!regular_) return;
         const float left = kPad, top = titleH_ + 6.f;

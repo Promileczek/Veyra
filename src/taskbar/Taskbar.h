@@ -41,6 +41,7 @@ private:
     float TrayWidthDip() const;
     void ToggleTrayFlyout();
     void ToggleStartMenu();
+    static LRESULT CALLBACK WinKeyHook(int code, WPARAM wp, LPARAM lp);
     void ToggleDesktop();
     void UpdateTooltip();
     void HideMinimizedWindows(bool hide);
@@ -66,6 +67,8 @@ private:
     TrayService tray_;
     TrayFlyout trayFlyout_;
     StartMenu startMenu_;
+    HHOOK winKeyHook_ = nullptr;
+    bool winDown_ = false, winUsed_ = false;
     Tooltip tooltip_;
     ScreenSnip snip_;
     HINSTANCE inst_ = nullptr;

@@ -2,6 +2,7 @@
 #include <winver.h>
 // Sklep: ikona (dock, Alt+Tab, panel aplikacji) + opis programu (nazwa w docku)
 1 ICON "../../res/store.ico"
+#include "store_icons.rc"  // ikonki programów (generuje tools/fetch_store_icons.py)
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION 1,0,0,0
 PRODUCTVERSION 1,0,0,0

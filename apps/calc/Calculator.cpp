@@ -91,58 +91,128 @@ public:
     }
 
 protected:
+    // Pędzel liniowy (gradient) — tworzony na bieżąco, rysowanie jest rzadkie
+    ComPtr<ID2D1LinearGradientBrush> Gradient(ID2D1DeviceContext* dc, D2D1_POINT_2F a, D2D1_POINT_2F b, D2D1_COLOR_F c0, D2D1_COLOR_F c1) {
+        const D2D1_GRADIENT_STOP stops[] = {{0.f, c0}, {1.f, c1}};
+        ComPtr<ID2D1GradientStopCollection> coll;
+        ComPtr<ID2D1LinearGradientBrush> grad;
+        dc->CreateGradientStopCollection(stops, 2, &coll);
+        if (coll) dc->CreateLinearGradientBrush({a, b}, coll.Get(), &grad);
+        return grad;
+    }
+
     void Paint(ID2D1DeviceContext* dc) override {
+        const float W = widthDip_, H = heightDip_;
         dc->Clear(kBg);
-        const float W = widthDip_;
-        // Karta z wynikiem: historia (do 3 wpisów), działanie, wynik
+        if (auto g = Gradient(dc, {0.f, 0.f}, {0.f, H}, D2D1::ColorF(0x171A26), D2D1::ColorF(0x0E0F14))) dc->FillRectangle({0.f, 0.f, W, H}, g.Get());
+
+        // Karta z wynikiem: gradient, fioletowa poświata w rogu, akcent u dołu
         const D2D1_RECT_F card{kPad, titleH_ + 2.f, W - kPad, ChipsTop() - kGap - 2.f};
-        Fill(dc, card, kCard, 18.f);
-        brush_->SetColor(D2D1::ColorF(1.f, 1.f, 1.f, 0.06f));
-        dc->DrawRoundedRectangle(D2D1::RoundedRect({card.left + 0.5f, card.top + 0.5f, card.right - 0.5f, card.bottom - 0.5f}, 18.f, 18.f),
+        const auto cardShape = D2D1::RoundedRect(card, 20.f, 20.f);
+        if (auto g = Gradient(dc, {card.left, card.top}, {card.right, card.bottom}, D2D1::ColorF(0x23263A), D2D1::ColorF(0x181A24)))
+            dc->FillRoundedRectangle(cardShape, g.Get());
+        {
+            const D2D1_GRADIENT_STOP stops[] = {{0.f, D2D1::ColorF(0x7C5CFF, 0.22f)}, {1.f, D2D1::ColorF(0x7C5CFF, 0.f)}};
+            ComPtr<ID2D1GradientStopCollection> coll;
+            ComPtr<ID2D1RadialGradientBrush> glow;
+            dc->CreateGradientStopCollection(stops, 2, &coll);
+            if (coll)
+                dc->CreateRadialGradientBrush(D2D1::RadialGradientBrushProperties({card.right - 30.f, card.top + 20.f}, {0.f, 0.f}, 160.f, 110.f),
+                                              coll.Get(), &glow);
+            if (glow) dc->FillRoundedRectangle(cardShape, glow.Get());
+        }
+        brush_->SetColor(D2D1::ColorF(1.f, 1.f, 1.f, 0.07f));
+        dc->DrawRoundedRectangle(D2D1::RoundedRect({card.left + 0.5f, card.top + 0.5f, card.right - 0.5f, card.bottom - 0.5f}, 20.f, 20.f),
                                  brush_.Get(), 1.f);
+        if (auto g = Gradient(dc, {card.left + 24.f, 0.f}, {card.right - 24.f, 0.f}, D2D1::ColorF(0x7C5CFF), D2D1::ColorF(0x3D8BFF)))
+            dc->FillRoundedRectangle(D2D1::RoundedRect({card.left + 24.f, card.bottom - 3.f, card.right - 24.f, card.bottom - 1.f}, 1.f, 1.f), g.Get());
+
         float hy = card.top + 12.f;
         for (size_t i = 0; i < history_.size(); ++i, hy += 17.f)
             Text(dc, history_[i], historyFormat_.Get(), {card.left + 16.f, hy, card.right - 18.f, hy + 16.f},
                  D2D1::ColorF(1.f, 1.f, 1.f, 0.22f + 0.08f * static_cast<float>(i)));
-        Text(dc, expression_, exprFormat_.Get(), {card.left + 16.f, card.bottom - 86.f, card.right - 18.f, card.bottom - 64.f}, kViolet);
+        Text(dc, expression_, exprFormat_.Get(), {card.left + 16.f, card.bottom - 88.f, card.right - 18.f, card.bottom - 66.f}, kViolet);
         const float size = std::clamp(52.f * 11.f / std::max<size_t>(display_.size(), 11), 24.f, 52.f);
         if (size != bigSize_ || !bigFormat_) {
             bigSize_ = size;
             bigFormat_ = MakeFormat(L"Bahnschrift", size, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_TRAILING);
         }
-        Text(dc, display_, bigFormat_.Get(), {card.left + 12.f, card.bottom - 66.f, card.right - 18.f, card.bottom - 8.f}, D2D1::ColorF(1.f, 1.f, 1.f));
+        Text(dc, display_, bigFormat_.Get(), {card.left + 12.f, card.bottom - 68.f, card.right - 18.f, card.bottom - 10.f}, D2D1::ColorF(1.f, 1.f, 1.f));
 
         for (int i = 0; i < kKeyCount; ++i) {
             const Key& k = kKeys[i];
             const D2D1_RECT_F r = KeyRect(i);
-            const float lift = i == pressed_ ? -0.03f : i == hover_ ? 0.04f : 0.f;
+            const float lift = i == pressed_ ? -0.03f : i == hover_ ? 0.05f : 0.f;
             const bool selectedOp = k.kind == K::Op && OpOf(k.label) == op_ && newEntry_ && op_ != Op::None;
-            D2D1_COLOR_F bg = D2D1::ColorF(0x20222B), fg = D2D1::ColorF(1.f, 1.f, 1.f, 0.95f);
+            D2D1_COLOR_F top = D2D1::ColorF(0x242733), bottom = D2D1::ColorF(0x1C1E27), fg = D2D1::ColorF(1.f, 1.f, 1.f, 0.95f);
             IDWriteTextFormat* f = digitFormat_.Get();
             switch (k.style) {
-            case 1:
-                bg = selectedOp ? D2D1::ColorF(0x5B45C9) : D2D1::ColorF(0x262338);
+            case 1:  // działania: fioletowy odcień, wybrane — pełny fiolet
+                top = selectedOp ? D2D1::ColorF(0x7C5CFF) : D2D1::ColorF(0x2E2850);
+                bottom = selectedOp ? D2D1::ColorF(0x5B45C9) : D2D1::ColorF(0x221E3A);
                 fg = selectedOp ? D2D1::ColorF(0xFFFFFF) : kViolet;
-                f = opFormat_.Get();
                 break;
-            case 3: bg = D2D1::ColorF(0x2B1F24), fg = D2D1::ColorF(0xFF6B6B), f = keyFormat_.Get(); break;
-            case 4: bg = D2D1::ColorF(0x23252F), fg = D2D1::ColorF(0xC9CCD6), f = k.kind == K::Back ? glyphFormat_.Get() : k.kind == K::Negate ? opFormat_.Get() : keyFormat_.Get(); break;
-            case 5: bg = D2D1::ColorF(0x1B1D25), fg = D2D1::ColorF(0x9AA0B4), f = keyFormat_.Get(); break;
+            case 2: top = D2D1::ColorF(0x8A6BFF), bottom = D2D1::ColorF(0x3D8BFF); break;
+            case 3: top = D2D1::ColorF(0x3A2129), bottom = D2D1::ColorF(0x2A1A20), fg = D2D1::ColorF(0xFF6B6B), f = keyFormat_.Get(); break;
+            case 4:
+                top = D2D1::ColorF(0x2B2E3B), bottom = D2D1::ColorF(0x22242F), fg = D2D1::ColorF(0xC9CCD6);
+                f = k.kind == K::Back ? glyphFormat_.Get() : keyFormat_.Get();
+                break;
             default: break;
             }
-            const float radius = k.style == 5 ? kChipH / 2 : 16.f;
-            if (k.style == 2) {  // "=": gradient fiolet → niebieski
-                const D2D1_GRADIENT_STOP stops[] = {{0.f, Shade(D2D1::ColorF(0x7C5CFF), lift)}, {1.f, Shade(D2D1::ColorF(0x3D8BFF), lift)}};
-                ComPtr<ID2D1GradientStopCollection> coll;
-                ComPtr<ID2D1LinearGradientBrush> grad;
-                dc->CreateGradientStopCollection(stops, 2, &coll);
-                if (coll) dc->CreateLinearGradientBrush({{r.left, r.top}, {r.right, r.bottom}}, coll.Get(), &grad);
-                if (grad) dc->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), grad.Get());
-                f = opFormat_.Get();
-            } else {
-                Fill(dc, r, Shade(bg, lift), radius);
+            if (k.style == 5) {  // małe funkcje: obrysowane pigułki
+                const float rad = kChipH / 2;
+                if (i == hover_) Fill(dc, r, D2D1::ColorF(1.f, 1.f, 1.f, 0.06f), rad);
+                brush_->SetColor(D2D1::ColorF(0x7C5CFF, i == hover_ ? 0.8f : 0.45f));
+                dc->DrawRoundedRectangle(D2D1::RoundedRect({r.left + 0.5f, r.top + 0.5f, r.right - 0.5f, r.bottom - 0.5f}, rad, rad), brush_.Get(), 1.f);
+                Text(dc, k.label, keyFormat_.Get(), r, D2D1::ColorF(0xC4B5FD));
+                continue;
             }
-            Text(dc, k.label, f, r, fg);
+            const float radius = 18.f;
+            const auto shape = D2D1::RoundedRect(r, radius, radius);
+            const bool diagonal = k.style == 2;  // "=": gradient po skosie, reszta z góry na dół (głębia)
+            if (auto g = Gradient(dc, {r.left, r.top}, diagonal ? D2D1_POINT_2F{r.right, r.bottom} : D2D1_POINT_2F{r.left, r.bottom},
+                                  Shade(top, lift), Shade(bottom, lift)))
+                dc->FillRoundedRectangle(shape, g.Get());
+            // Jaśniejsza krawędź u góry — przycisk wygląda na lekko wypukły
+            if (auto g = Gradient(dc, {r.left, r.top}, {r.left, r.bottom}, D2D1::ColorF(1.f, 1.f, 1.f, 0.10f), D2D1::ColorF(1.f, 1.f, 1.f, 0.f)))
+                dc->DrawRoundedRectangle(D2D1::RoundedRect({r.left + 0.5f, r.top + 0.5f, r.right - 0.5f, r.bottom - 0.5f}, radius, radius), g.Get(), 1.f);
+            if (k.kind == K::Op || k.kind == K::Equals || k.kind == K::Negate) DrawSymbol(dc, k.label, r, fg);
+            else Text(dc, k.label, f, r, fg);
+        }
+    }
+
+    // Symbole działań liniami — równa grubość i środek niezależnie od czcionki
+    void DrawSymbol(ID2D1DeviceContext* dc, const std::wstring& label, const D2D1_RECT_F& r, const D2D1_COLOR_F& c) {
+        const float cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, a = 8.f, w = 2.2f;
+        brush_->SetColor(c);
+        ComPtr<ID2D1StrokeStyle> round;
+        ComPtr<ID2D1Factory> factory;
+        dc->GetFactory(&factory);
+        const D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND);
+        factory->CreateStrokeStyle(props, nullptr, 0, &round);
+        auto line = [&](float x1, float y1, float x2, float y2) { dc->DrawLine({x1, y1}, {x2, y2}, brush_.Get(), w, round.Get()); };
+        auto dot = [&](float x, float y) { dc->FillEllipse(D2D1::Ellipse({x, y}, 1.9f, 1.9f), brush_.Get()); };
+        if (label == L"+") {
+            line(cx - a, cy, cx + a, cy);
+            line(cx, cy - a, cx, cy + a);
+        } else if (label == L"−") {
+            line(cx - a, cy, cx + a, cy);
+        } else if (label == L"×") {
+            const float d = a * 0.72f;
+            line(cx - d, cy - d, cx + d, cy + d);
+            line(cx - d, cy + d, cx + d, cy - d);
+        } else if (label == L"÷") {
+            line(cx - a, cy, cx + a, cy);
+            dot(cx, cy - 5.5f);
+            dot(cx, cy + 5.5f);
+        } else if (label == L"=") {
+            line(cx - a, cy - 3.5f, cx + a, cy - 3.5f);
+            line(cx - a, cy + 3.5f, cx + a, cy + 3.5f);
+        } else if (label == L"±") {
+            line(cx - 6.f, cy - 3.f, cx + 6.f, cy - 3.f);
+            line(cx, cy - 9.f, cx, cy + 3.f);
+            line(cx - 6.f, cy + 7.f, cx + 6.f, cy + 7.f);
         }
     }
 

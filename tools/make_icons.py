@@ -36,7 +36,7 @@ def font(size, bold=True):
 
 
 def terminal():
-    img = base((0x5E, 0x27, 0x50), (0x2C, 0x00, 0x1E))  # bakłażan Ubuntu
+    img = base((0x2A, 0x2C, 0x34), (0x0E, 0x0F, 0x13))  # ciemne tło terminala
     d = ImageDraw.Draw(img)
     d.line([(110, 170), (210, 255), (110, 340)], fill=(0x8A, 0xE2, 0x34), width=44, joint="curve")
     d.rounded_rectangle([250, 318, 400, 356], radius=14, fill=(0xEE, 0xEE, 0xEC))
