@@ -48,14 +48,19 @@ target_link_libraries(exploder PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodec
 # /OPT:REF /OPT:ICF jawnie — /DEBUG domyślnie je wyłącza, a nie chcemy większego exe.
 target_compile_options(exploder PRIVATE /Zi)
 target_link_options(exploder PRIVATE /DEBUG /OPT:REF /OPT:ICF /MAP)
+# Tapety Veyry obok exploder.exe (domyślna ustawiana przy pierwszym starcie)
+add_custom_command(TARGET exploder POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/res/wallpapers $<TARGET_FILE_DIR:exploder>/wallpapers)
 
 # Aplikacje Explodera (osobne procesy — awaria jednej nie kładzie powłoki; RAM tylko gdy otwarte)
 set(EXPLODER_APP_CORE src/core/Graphics.cpp src/core/Accent.cpp src/core/AppWindow.cpp src/core/TrafficLights.cpp src/core/Settings.cpp src/app.manifest)
-foreach(app terminal calc store)
+foreach(app terminal calc store settings)
     if(app STREQUAL "terminal")
         set(src apps/terminal/Terminal.cpp)
     elseif(app STREQUAL "calc")
         set(src apps/calc/Calculator.cpp)
+    elseif(app STREQUAL "settings")
+        set(src apps/settings/SettingsApp.cpp)
     else()
         set(src apps/store/Store.cpp)
     endif()

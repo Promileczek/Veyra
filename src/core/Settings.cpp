@@ -48,6 +48,16 @@ std::wstring Get(const std::wstring& key, const std::wstring& fallback) {
     return it == Values().end() ? fallback : it->second;
 }
 
+void Reload() {
+    g_loaded = false;
+    Values().clear();
+}
+
+unsigned int ChangedMessage() {
+    static const UINT msg = RegisterWindowMessageW(L"VeyraSettingsChanged");
+    return msg;
+}
+
 bool GetBool(const std::wstring& key, bool fallback) {
     const std::wstring v = Get(key);
     return v.empty() ? fallback : v == L"1";

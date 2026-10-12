@@ -1,5 +1,6 @@
 #include "Taskbar.h"
 #include "../core/Accent.h"
+#include "../core/Settings.h"
 #include "../core/WorkArea.h"
 #include "../files/FileWindow.h"
 #include <knownfolders.h>
@@ -585,6 +586,11 @@ LRESULT CALLBACK Taskbar::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == Settings::ChangedMessage()) {
+        Settings::Reload();
+        if (onSettingsChanged_) onSettingsChanged_();
+        return 0;
+    }
     if (msg == tracker_.ShellHookMessage() && msg != 0) {
         if (tracker_.HandleShellHook(wp, lp)) RequestRedraw();
         return 0;

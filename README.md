@@ -34,8 +34,9 @@
 | 🔀 Alt+Tab z podglądem okien | ✅ |
 | 📁 Menedżer plików | ✅ |
 | 💻 Terminal, 🧮 Kalkulator, 🛍️ Sklep | ✅ |
+| ⚙️ Ustawienia | ✅ |
 | 🔔 Powiadomienia | 📋 |
-| ⚙️ Ustawienia i motywy | 📋 |
+| 🎨 Motywy | 📋 |
 | 🖥️ Wiele monitorów | 📋 |
 
 ✅ gotowe · 🚧 w trakcie · 📋 planowane
@@ -48,14 +49,14 @@ Wymagania: Windows 10 1809+ (ConPTY), Visual Studio 2022 Build Tools (MSVC, Wind
 build.bat
 ```
 
-Wynik trafia do `%LOCALAPPDATA%\Exploder\build\`: `exploder.exe` (powłoka) oraz `exploder-terminal.exe`, `exploder-calc.exe`, `exploder-store.exe`.
+Wynik trafia do `%LOCALAPPDATA%\Exploder\build\`: `exploder.exe` (powłoka) oraz `exploder-terminal.exe`, `exploder-calc.exe`, `exploder-store.exe`, `exploder-settings.exe`.
 
 Uruchomienie jako powłoka: zamknij `explorer.exe` (Menedżer zadań → Eksplorator Windows → Zakończ zadanie) i uruchom `exploder.exe`.
 
 > [!TIP]
 > Chcesz wrócić do Eksploratora? <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd> albo PPM na docku → „Wróć do explorer.exe”. Gdyby powłoka się zawiesiła: Menedżer zadań → Uruchom nowe zadanie → `explorer.exe`.
 
-Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, statystyki użycia, ikony sklepu, `crash.dmp` przy awarii).
+Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, statystyki użycia, `crash.dmp` przy awarii).
 
 ## ⌨️ Skróty klawiszowe
 
@@ -72,8 +73,9 @@ Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, s
 - [x] Zasobnik i Alt+Tab
 - [x] Menedżer plików
 - [x] Terminal, Kalkulator, Sklep
+- [x] Ustawienia i własna tapeta
 - [ ] Powiadomienia
-- [ ] Ustawienia i motywy
+- [ ] Motywy
 - [ ] Wiele monitorów
 
 ## 🧩 Struktura
@@ -86,8 +88,8 @@ Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, s
 | `src/desktop` | Pulpit, panel aplikacji, panel plików, statystyki |
 | `src/files` | Menedżer plików |
 | `src/topbar` | Górny pasek: sieć, muzyka, głośność |
-| `apps/` | Terminal, Kalkulator, Sklep |
-| `res/`, `tools/` | Ikony aplikacji i ich generator |
+| `apps/` | Terminal, Kalkulator, Sklep, Ustawienia |
+| `res/`, `tools/` | Ikony, tapeta i ich generatory |
 
 ## 📄 Licencja
 

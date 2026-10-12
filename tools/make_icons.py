@@ -64,9 +64,25 @@ def store():
     return img
 
 
+def settings():
+    import math
+    img = base((0x2A, 0x2A, 0x31), (0x18, 0x18, 0x1D))  # grafit Veyry
+    d = ImageDraw.Draw(img)
+    c, teeth, r_out, r_in = S / 2, 8, 176, 140
+    pts = []
+    for i in range(teeth * 4):  # ząb: dwa punkty na zewnątrz, dwa wewnątrz
+        a = 2 * math.pi * i / (teeth * 4) - math.pi / (teeth * 4)
+        r = r_out if (i % 4) in (1, 2) else r_in
+        pts.append((c + r * math.cos(a), c + r * math.sin(a)))
+    d.polygon(pts, fill=(0x61, 0xB3, 0xFF))
+    d.ellipse([c - 120, c - 120, c + 120, c + 120], fill=(0x61, 0xB3, 0xFF))
+    d.ellipse([c - 58, c - 58, c + 58, c + 58], fill=(0x20, 0x20, 0x26))
+    return img
+
+
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
-    for name, fn in (("terminal", terminal), ("calculator", calculator), ("store", store)):
+    for name, fn in (("terminal", terminal), ("calculator", calculator), ("store", store), ("settings", settings)):
         fn().save(OUT / f"{name}.ico", sizes=SIZES)
         fn().resize((128, 128), Image.LANCZOS).save(OUT / f"{name}.png")
         print("ok", name)

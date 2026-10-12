@@ -20,6 +20,8 @@ public:
     // Wywoływane tuż przed uruchomieniem explorer.exe przy wyjściu (np. zamknięcie pulpitu,
     // inaczej explorer zobaczy nasze okno powłoki i nie przejmie powłoki).
     void SetBeforeExplorer(std::function<void()> fn) { beforeExplorer_ = std::move(fn); }
+    // Aplikacja Ustawienia zmieniła settings.txt
+    void SetOnSettingsChanged(std::function<void()> fn) { onSettingsChanged_ = std::move(fn); }
     // Przełącznik "Kropki macOS w oknach" w menu docka
     void SetWindowDotsToggle(std::function<bool()> isOn, std::function<void(bool)> set) {
         dotsOn_ = std::move(isOn);
@@ -74,6 +76,7 @@ private:
     HINSTANCE inst_ = nullptr;
     TaskbarTheme theme_;
     std::function<void()> beforeExplorer_;
+    std::function<void()> onSettingsChanged_;
     std::function<bool()> dotsOn_;
     std::function<void(bool)> setDots_;
     std::vector<HWND> hiddenByStart_;  // okna zminimalizowane przyciskiem Start (do przywrócenia)

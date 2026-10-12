@@ -1,7 +1,9 @@
 #include <windows.h>
 #include <objbase.h>
 #include <dbghelp.h>
+#include <string>
 #include "core/Graphics.h"
+#include "core/Settings.h"
 #include "desktop/Desktop.h"
 #include "files/FileWindow.h"
 #include "shell/AltTab.h"
@@ -31,6 +33,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;  // już działa
 
     OleInitialize(nullptr);  // COM + schowek plików (kopiuj/wklej w Explodzie)
+    // Pierwsze uruchomienie: domyślna tapeta Veyry (potem użytkownik zmienia ją w Ustawieniach — już jej nie nadpisujemy)
+    if (!Settings::GetBool(L"defaultWallpaperApplied", false)) {
+        wchar_t exe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring wallpaper = exe;
+        wallpaper = wallpaper.substr(0, wallpaper.find_last_of(L'\\') + 1) + L"wallpapers\\veyra.jpg";
+        if (GetFileAttributesW(wallpaper.c_str()) != INVALID_FILE_ATTRIBUTES &&
+            SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wallpaper.data(), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE))
+            Settings::SetBool(L"defaultWallpaperApplied", true);
+    }
     int code = 1;
     {
         // Tryb powłoki: explorer.exe nie działa → my rysujemy pulpit i obsługujemy zasobnik.
@@ -55,6 +67,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                 desktop.Destroy();
             });
             if (shellMode) altTab.Install(inst, graphics);  // bez explorera systemowy Alt+Tab jest w stylu Win95
+            taskbar.SetOnSettingsChanged([&windowDots] {
+                if (windowDots.Enabled() != Settings::GetBool(L"windowDots", true)) windowDots.SetEnabled(!windowDots.Enabled());
+            });
             if (shellMode && windowDots.Install(inst, graphics))
                 taskbar.SetWindowDotsToggle([&windowDots] { return windowDots.Enabled(); },
                                             [&windowDots](bool on) { windowDots.SetEnabled(on); });

@@ -146,10 +146,7 @@ void StartMenu::Run(Action a) {
     case Action::Files:
         if (openFiles) openFiles();
         break;
-    case Action::Settings:
-        if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", L"ms-settings:", nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-            ShellExecuteW(nullptr, L"open", L"control.exe", nullptr, nullptr, SW_SHOWNORMAL);
-        break;
+    case Action::Settings: LaunchSibling(L"exploder-settings.exe"); break;
     case Action::TaskManager: ShellExecuteW(nullptr, L"open", L"taskmgr.exe", nullptr, nullptr, SW_SHOWNORMAL); break;
     case Action::Desktop:
         if (showDesktop) showDesktop();

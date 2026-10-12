@@ -208,6 +208,21 @@ protected:
     }
 
     bool OnMessage(UINT msg, WPARAM, LPARAM, LRESULT& result) override {
+        if (msg == Settings::ChangedMessage()) {  // aplikacja Ustawienia zmieniła rozmiar czcionki
+            Settings::Reload();
+            const float size = static_cast<float>(_wtof(Settings::Get(L"terminalFontSize", L"14").c_str()));
+            if (size >= 8.f && size <= 32.f && size != fontSize_) {
+                fontSize_ = size;
+                MakeFonts();
+                cols_ = rows_ = 0;
+                ResizeGrid(std::max(10, static_cast<int>((widthDip_ - 2 * kPad) / cellW_)),
+                           std::max(3, static_cast<int>((heightDip_ - titleH_ - 6.f - kPad) / cellH_)));
+                if (pty_) ResizePseudoConsole(pty_, {static_cast<SHORT>(cols_), static_cast<SHORT>(rows_)});
+                Redraw();
+            }
+            result = 0;
+            return true;
+        }
         if (msg == WM_PTY_OUTPUT) {
             std::string data;
             {
