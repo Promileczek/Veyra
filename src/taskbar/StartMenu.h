@@ -8,6 +8,7 @@ class StartMenu : public Popup {
 public:
     std::function<void()> openFiles;    // nowe okno Explodera (Ten komputer)
     std::function<void()> showDesktop;  // dawne działanie przycisku: zminimalizuj wszystko / przywróć
+    std::function<void()> openRun;      // okienko "Uruchom" Veyry
 
 protected:
     D2D1_SIZE_F ContentSize() override;

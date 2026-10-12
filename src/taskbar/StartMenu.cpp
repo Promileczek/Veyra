@@ -151,13 +151,9 @@ void StartMenu::Run(Action a) {
     case Action::Desktop:
         if (showDesktop) showDesktop();
         break;
-    case Action::Run: {
-        // Okno "Uruchom" z shell32 (nieudokumentowane RunFileDlg, ordinal 61) — działa bez explorera
-        using RunFileDlgFn = void(WINAPI*)(HWND, HICON, LPCWSTR, LPCWSTR, LPCWSTR, UINT);
-        if (HMODULE shell = GetModuleHandleW(L"shell32.dll"))
-            if (auto fn = reinterpret_cast<RunFileDlgFn>(GetProcAddress(shell, MAKEINTRESOURCEA(61)))) fn(nullptr, nullptr, nullptr, nullptr, nullptr, 0);
+    case Action::Run:  // własne okienko Veyry (cmd → Terminal, calc → Kalkulator)
+        if (openRun) openRun();
         break;
-    }
     case Action::Lock: LockWorkStation(); break;
     case Action::Sleep: SetSuspendState(FALSE, FALSE, FALSE); break;
     case Action::Restart:

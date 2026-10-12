@@ -29,6 +29,7 @@ add_executable(exploder WIN32
     src/taskbar/AppIcons.cpp
     src/taskbar/TrayFlyout.cpp
     src/taskbar/StartMenu.cpp
+    src/taskbar/RunBox.cpp
     src/desktop/Desktop.cpp
     src/desktop/DesktopItems.cpp
     src/desktop/AppLauncher.cpp

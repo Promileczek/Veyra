@@ -18,7 +18,7 @@ constexpr UINT WM_REDRAW = WM_APP + 2;
 constexpr UINT WM_START_KEY = WM_APP + 3;  // sam klawisz Windows (wciśnięty i puszczony bez innego klawisza)
 Taskbar* g_taskbar = nullptr;              // dla haka klawiatury
 constexpr UINT_PTR kClockTimer = 1, kFullscreenTimer = 2;
-constexpr int kHotkeyQuit = 1, kHotkeySnip = 2;
+constexpr int kHotkeyQuit = 1, kHotkeySnip = 2, kHotkeyRun = 3;
 constexpr int kNone = -1, kStart = -2, kClock = -3;  // >= 0: indeks przycisku okna
 constexpr int kTray = -4;                            // przycisk "Tray" (ikony zasobnika schowane w panelu)
 constexpr float kDividerWidth = 13.f;                // separator przed zasobnikiem/zegarem w docku
@@ -62,6 +62,8 @@ bool Taskbar::Create(HINSTANCE inst, Graphics& g) {
     trayFlyout_.Create(inst, g, tray_, theme_, [this] { RequestRedraw(); });
     startMenu_.Create(inst, g, L"ExploderStartMenu");
     startMenu_.showDesktop = [this] { ToggleDesktop(); };
+    runBox_.Create(inst, g, L"ExploderRunBox");
+    startMenu_.openRun = [this] { runBox_.Open(dpi_); };
     startMenu_.openFiles = [this] {
         ComPtr<IShellItem> pc;
         SHGetKnownFolderItem(FOLDERID_ComputerFolder, KF_FLAG_DEFAULT, nullptr, IID_PPV_ARGS(&pc));
@@ -91,6 +93,8 @@ bool Taskbar::Create(HINSTANCE inst, Graphics& g) {
     RegisterHotKey(hwnd_, kHotkeyQuit, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'Q');
     // Win+Shift+S — wycinek ekranu (gdy działa explorer, skrót należy do niego i rejestracja się nie uda)
     RegisterHotKey(hwnd_, kHotkeySnip, MOD_WIN | MOD_SHIFT | MOD_NOREPEAT, 'S');
+    // Win+R — okienko "Uruchom" Veyry (z explorerem skrót należy do niego)
+    RegisterHotKey(hwnd_, kHotkeyRun, MOD_WIN | MOD_NOREPEAT, 'R');
     tooltip_.Create(inst, g);
     inst_ = inst;
     ScheduleClock();
@@ -735,6 +739,7 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_HOTKEY:
         if (wp == kHotkeyQuit) Quit(true);
+        else if (wp == kHotkeyRun) runBox_.Open(dpi_);
         else if (wp == kHotkeySnip) {
             tooltip_.Hide();
             snip_.Start(inst_);
@@ -762,6 +767,7 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         if (!appbar_) ApplyWorkArea(true);
         UnregisterHotKey(hwnd_, kHotkeyQuit);
         UnregisterHotKey(hwnd_, kHotkeySnip);
+        UnregisterHotKey(hwnd_, kHotkeyRun);
         KillTimer(hwnd_, kClockTimer);
         if (appbar_) {
             APPBARDATA abd{sizeof(abd)};
