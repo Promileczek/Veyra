@@ -44,15 +44,13 @@ def terminal():
 
 
 def calculator():
-    img = base((0x30, 0x2C, 0x27), (0x22, 0x1F, 0x1B))  # grafit jak korpus kalkulatora
+    img = base((0x2A, 0x2A, 0x31), (0x18, 0x18, 0x1D))  # grafit Veyry
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([84, 76, S - 84, 178], radius=18, fill=(0x1A, 0x18, 0x15))
-    d.rounded_rectangle([94, 86, S - 94, 168], radius=12, fill=(0xA9, 0xB2, 0x93))  # wyświetlacz
+    d.rounded_rectangle([84, 78, S - 84, 172], radius=20, fill=(0x34, 0x34, 0x3C), outline=(0x55, 0x55, 0x60), width=3)
     for i in range(9):
-        x, y = 84 + (i % 3) * 118, 206 + (i // 3) * 82
-        amber = i % 3 == 2
-        d.rounded_rectangle([x, y + 6, x + 104, y + 70], radius=16, fill=(0xC8, 0x86, 0x30) if amber else (0x2C, 0x29, 0x25))
-        d.rounded_rectangle([x, y, x + 104, y + 64], radius=16, fill=(0xF2, 0xA5, 0x41) if amber else (0x3B, 0x37, 0x32))
+        x, y = 84 + (i % 3) * 118, 200 + (i // 3) * 82
+        blue = i % 3 == 2
+        d.rounded_rectangle([x, y, x + 104, y + 66], radius=16, fill=(0x61, 0xB3, 0xFF) if blue else (0x3A, 0x3A, 0x43))
     return img
 
 

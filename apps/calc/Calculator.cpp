@@ -1,5 +1,5 @@
-// Kalkulator Explodera — wygląd klasycznego urządzenia: ciepły grafitowy korpus, matowy wyświetlacz jak LCD (szałwia),
-// kremowe cyfry, bursztynowe działania i "=", płaskie klawisze z dolną krawędzią (bez gradientów i poświat).
+// Kalkulator Explodera — wygląd spójny z Veyrą (dock, panele, menu): grafitowe tło, panel wyniku z jasną obwódką,
+// płaskie zaokrąglone klawisze, niebieski akcent #61B3FF na działaniach i "=", Segoe UI. Bez przezroczystości.
 // Górny rząd małych klawiszy: ± √x x² 1/x. Szerokie 0.
 // Klawiatura: cyfry, + - * /, przecinek/kropka, Enter/=, Backspace, Esc (C), Delete (CE), %, Ctrl+C / Ctrl+V.
 #include "../../src/core/AppWindow.h"
@@ -35,14 +35,9 @@ constexpr Key kKeys[] = {
 };
 constexpr int kKeyCount = static_cast<int>(std::size(kKeys));
 constexpr float kChipH = 30.f, kGap = 8.f, kPad = 14.f;
-// Paleta: grafit, krem, bursztyn, wyświetlacz w kolorze szałwii
-const D2D1_COLOR_F kBody = D2D1::ColorF(0x26231F), kKey = D2D1::ColorF(0x3B3732), kKeyFn = D2D1::ColorF(0x56514A),
-                   kCream = D2D1::ColorF(0xEDE6DA), kAmber = D2D1::ColorF(0xF2A541), kLcd = D2D1::ColorF(0xA9B293),
-                   kLcdInk = D2D1::ColorF(0x1F241C);
-
-D2D1_COLOR_F Shade(D2D1_COLOR_F c, float d) {
-    return {std::clamp(c.r + d, 0.f, 1.f), std::clamp(c.g + d, 0.f, 1.f), std::clamp(c.b + d, 0.f, 1.f), c.a};
-}
+// Paleta Veyry: grafit jak panele, białe nakładki, akcent jak w docku i menu
+const D2D1_COLOR_F kBody = D2D1::ColorF(0x1C1C21), kAccent = D2D1::ColorF(0.38f, 0.70f, 1.f), kOnAccent = D2D1::ColorF(0x0B1A26);
+D2D1_COLOR_F White(float a) { return D2D1::ColorF(1.f, 1.f, 1.f, a); }
 
 // Liczba → tekst: do 15 cyfr znaczących, przecinek, grupy tysięcy oddzielone wąską spacją
 std::wstring Format(double v) {
@@ -84,11 +79,11 @@ public:
         o.minWidth = 300.f;
         o.minHeight = 500.f;
         if (!Create(inst, g, o)) return false;
-        exprFormat_ = MakeFormat(L"Bahnschrift", 15.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
-        historyFormat_ = MakeFormat(L"Bahnschrift", 12.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
-        keyFormat_ = MakeFormat(L"Bahnschrift", 15.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
-        digitFormat_ = MakeFormat(L"Bahnschrift", 22.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
-        opFormat_ = MakeFormat(L"Bahnschrift", 26.f, DWRITE_FONT_WEIGHT_LIGHT, DWRITE_TEXT_ALIGNMENT_CENTER);
+        exprFormat_ = MakeFormat(L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        historyFormat_ = MakeFormat(L"Segoe UI", 12.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        keyFormat_ = MakeFormat(L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+        digitFormat_ = MakeFormat(L"Segoe UI", 22.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+        opFormat_ = MakeFormat(L"Segoe UI", 26.f, DWRITE_FONT_WEIGHT_LIGHT, DWRITE_TEXT_ALIGNMENT_CENTER);
         glyphFormat_ = MakeFormat(L"Segoe MDL2 Assets", 16.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
         Redraw();
         return true;
@@ -99,48 +94,57 @@ protected:
         const float W = widthDip_;
         dc->Clear(kBody);
 
-        // Wyświetlacz: matowy panel jak LCD, ciemniejsza linia u góry (zagłębienie), ciemne cyfry
-        const D2D1_RECT_F lcd{kPad, titleH_ + 2.f, W - kPad, ChipsTop() - kGap - 4.f};
-        Fill(dc, {lcd.left - 3.f, lcd.top - 3.f, lcd.right + 3.f, lcd.bottom + 3.f}, D2D1::ColorF(0x1A1815), 13.f);  // ramka
-        Fill(dc, lcd, kLcd, 10.f);
-        Fill(dc, {lcd.left + 10.f, lcd.top + 1.f, lcd.right - 10.f, lcd.top + 3.f}, D2D1::ColorF(0x000000, 0.12f));
-        float hy = lcd.top + 10.f;
+        // Panel wyniku jak panele pulpitu: delikatne wypełnienie + jasna obwódka
+        const D2D1_RECT_F panel{kPad, titleH_ + 2.f, W - kPad, ChipsTop() - kGap - 2.f};
+        Fill(dc, panel, White(0.05f), 16.f);
+        brush_->SetColor(White(0.12f));
+        dc->DrawRoundedRectangle(D2D1::RoundedRect({panel.left + 0.5f, panel.top + 0.5f, panel.right - 0.5f, panel.bottom - 0.5f}, 16.f, 16.f),
+                                 brush_.Get(), 1.f);
+        float hy = panel.top + 12.f;
         for (size_t i = 0; i < history_.size(); ++i, hy += 16.f)
-            Text(dc, history_[i], historyFormat_.Get(), {lcd.left + 14.f, hy, lcd.right - 14.f, hy + 15.f},
-                 D2D1::ColorF(kLcdInk.r, kLcdInk.g, kLcdInk.b, 0.35f + 0.12f * static_cast<float>(i)));
-        Text(dc, expression_, exprFormat_.Get(), {lcd.left + 14.f, lcd.bottom - 84.f, lcd.right - 14.f, lcd.bottom - 62.f},
-             D2D1::ColorF(kLcdInk.r, kLcdInk.g, kLcdInk.b, 0.7f));
-        const float size = std::clamp(52.f * 11.f / std::max<size_t>(display_.size(), 11), 24.f, 52.f);
+            Text(dc, history_[i], historyFormat_.Get(), {panel.left + 14.f, hy, panel.right - 16.f, hy + 15.f},
+                 White(0.30f + 0.10f * static_cast<float>(i)));
+        Text(dc, expression_, exprFormat_.Get(), {panel.left + 14.f, panel.bottom - 84.f, panel.right - 16.f, panel.bottom - 62.f}, White(0.6f));
+        const float size = std::clamp(50.f * 11.f / std::max<size_t>(display_.size(), 11), 24.f, 50.f);
         if (size != bigSize_ || !bigFormat_) {
             bigSize_ = size;
-            bigFormat_ = MakeFormat(L"Bahnschrift", size, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_TRAILING);
+            bigFormat_ = MakeFormat(L"Segoe UI", size, DWRITE_FONT_WEIGHT_SEMI_LIGHT, DWRITE_TEXT_ALIGNMENT_TRAILING);
         }
-        Text(dc, display_, bigFormat_.Get(), {lcd.left + 10.f, lcd.bottom - 66.f, lcd.right - 14.f, lcd.bottom - 8.f}, kLcdInk);
+        Text(dc, display_, bigFormat_.Get(), {panel.left + 10.f, panel.bottom - 66.f, panel.right - 16.f, panel.bottom - 6.f}, White(1.f));
 
         for (int i = 0; i < kKeyCount; ++i) {
             const Key& k = kKeys[i];
             const D2D1_RECT_F r = KeyRect(i);
+            const bool hot = i == hover_, down = i == pressed_;
             const bool selectedOp = k.kind == K::Op && OpOf(k.label) == op_ && newEntry_ && op_ != Op::None;
-            D2D1_COLOR_F bg = kKey, fg = kCream;
+            D2D1_COLOR_F bg = White(down ? 0.05f : hot ? 0.13f : 0.08f), fg = White(0.95f);
             IDWriteTextFormat* f = digitFormat_.Get();
             switch (k.style) {
-            case 1: fg = selectedOp ? kBody : kAmber, bg = selectedOp ? kAmber : kKey; break;
-            case 2: bg = kAmber, fg = kBody; break;
-            case 3: bg = kKeyFn, fg = D2D1::ColorF(0xFF8A5B), f = keyFormat_.Get(); break;
-            case 4: bg = kKeyFn, f = k.kind == K::Back ? glyphFormat_.Get() : keyFormat_.Get(); break;
-            case 5: bg = D2D1::ColorF(0x322E29), fg = D2D1::ColorF(0xCFC7B9), f = keyFormat_.Get(); break;
+            case 1:  // działania: niebieski odcień, wybrane — pełny akcent
+                bg = selectedOp ? kAccent : D2D1::ColorF(kAccent.r, kAccent.g, kAccent.b, down ? 0.10f : hot ? 0.24f : 0.16f);
+                fg = selectedOp ? kOnAccent : kAccent;
+                break;
+            case 2:
+                bg = hot && !down ? D2D1::ColorF(0.48f, 0.77f, 1.f) : kAccent;
+                fg = kOnAccent;
+                break;
+            case 3:
+            case 4:
+                bg = White(down ? 0.03f : hot ? 0.09f : 0.045f);
+                fg = White(0.8f);
+                f = k.kind == K::Back ? glyphFormat_.Get() : keyFormat_.Get();
+                break;
+            case 5:
+                bg = White(down ? 0.02f : hot ? 0.08f : 0.035f);
+                fg = White(0.7f);
+                f = keyFormat_.Get();
+                break;
             default: break;
             }
-            const float radius = k.style == 5 ? 8.f : 12.f;
-            const bool down = i == pressed_;
-            const float shift = down ? 2.f : 0.f;  // wciśnięty klawisz "opada" na dolną krawędź
-            // Dolna krawędź (klawisz fizyczny), potem wierzch
-            Fill(dc, {r.left, r.top + 2.f, r.right, r.bottom}, Shade(bg, -0.10f), radius);
-            const D2D1_RECT_F face{r.left, r.top + shift, r.right, r.bottom - 2.f + shift};
-            Fill(dc, face, Shade(bg, i == hover_ && !down ? 0.05f : 0.f), radius);
-            if (k.kind == K::Op || k.kind == K::Equals || k.kind == K::Negate) DrawSymbol(dc, k.label, face, fg);
-            else if (k.span == 2) Text(dc, k.label, f, {face.left, face.top, face.left + (face.right - face.left) / 2, face.bottom}, fg);
-            else Text(dc, k.label, f, face, fg);
+            Fill(dc, r, bg, k.style == 5 ? 8.f : 12.f);
+            if (k.kind == K::Op || k.kind == K::Equals || k.kind == K::Negate) DrawSymbol(dc, k.label, r, fg);
+            else if (k.span == 2) Text(dc, k.label, f, {r.left, r.top, r.left + (r.right - r.left) / 2, r.bottom}, fg);
+            else Text(dc, k.label, f, r, fg);
         }
     }
 
