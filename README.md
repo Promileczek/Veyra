@@ -19,33 +19,24 @@
 
 ## 🎯 O projekcie
 
-**Veyra** zastępuje `explorer.exe` jako powłoka systemu: pulpit z tapetą, dock, górny pasek, panel aplikacji, zasobnik, Alt+Tab, menedżer plików i własne aplikacje. Wygląd łączy Windows 11, KDE Plasma i macOS (kropki zamiast przycisków okien, szkło), a całość jest pisana w C++ (Direct3D 11 + Direct2D + DirectComposition) z myślą o **małym zużyciu RAM** (~90 MB cała powłoka).
+**Veyra** zastępuje `explorer.exe` jako powłoka systemu. Pisana w C++ (Direct2D + DirectComposition), lekka — cała powłoka zajmuje ok. 90 MB RAM.
 
 > [!NOTE]
-> Powłoka włącza się w pełni (pulpit, zasobnik, kropki w oknach, Alt+Tab), gdy `explorer.exe` nie działa. Uruchomiona obok Eksploratora działa jako sam dock i górny pasek.
+> Powłoka włącza się w pełni (pulpit, zasobnik, Alt+Tab), gdy `explorer.exe` nie działa. Uruchomiona obok Eksploratora działa jako sam dock i górny pasek.
 
 ## ✨ Funkcje
 
-| Funkcja | Status | Opis |
-| --- | :---: | --- |
-| 🖥️ Pulpit | ✅ | Tapeta z ustawień Windows, szklane panele, bez ikon (z wyboru) |
-| 📊 Dock | ✅ | Styl macOS, ikony aplikacji, podpowiedzi, chowa się przy pełnym ekranie |
-| 🪟 Menu Windows | ✅ | Aplikacje, Ustawienia, Menedżer zadań, Uruchom…, zasilanie |
-| 🚀 Panel aplikacji | ✅ | Przypięte programy, wyszukiwarka wszystkich aplikacji, okienko „Dodaj” |
-| 📈 Statystyki | ✅ | Procesor, RAM, dysk, sieć, czas działania, czas w aplikacjach |
-| 🔔 Zasobnik systemowy | ✅ | Ikony tray schowane pod przyciskiem „Tray” |
-| 🎵 Górny pasek | ✅ | Sieć i Wi-Fi, muzyka (Spotify/YouTube), głośność z suwakiem |
-| 🔀 Alt+Tab | ✅ | Własny przełącznik z podglądem okien |
-| 🔴 Kropki macOS | ✅ | Zamknij / minimalizuj / maksymalizuj w oknach innych programów |
-| ✂️ Zrzuty ekranu | ✅ | Win+Shift+S: wycinek albo cały ekran do schowka |
-| 📁 Menedżer plików | ✅ | Okno w stylu Findera, nowe foldery, kopiuj/wklej, menu kontekstowe |
-| 💻 Terminal | ✅ | W stylu Linuksa (ConPTY + cmd, aliasy `ls`, `cat`, `grep`…) |
-| 🧮 Kalkulator | ✅ | Własny wygląd, historia obliczeń, klawiatura |
-| 🛍️ Sklep | ✅ | Popularne programy instalowane jednym kliknięciem (winget) |
-| 🎧 Spotify przez API | 📋 | Klucz API w ustawieniach |
-| 🔔 Powiadomienia | 📋 | Własne dymki powiadomień |
-| ⚙️ Ustawienia | 📋 | Okno ustawień, motywy z JSON |
-| 🖥️🖥️ Wiele monitorów | 📋 | Dock i pasek na każdym ekranie |
+| Funkcja | Status |
+| --- | :---: |
+| 🖥️ Pulpit, dock i górny pasek | ✅ |
+| 🚀 Panel aplikacji z wyszukiwarką | ✅ |
+| 🧩 Zasobnik systemowy | ✅ |
+| 🔀 Alt+Tab z podglądem okien | ✅ |
+| 📁 Menedżer plików | ✅ |
+| 💻 Terminal, 🧮 Kalkulator, 🛍️ Sklep | ✅ |
+| 🔔 Powiadomienia | 📋 |
+| ⚙️ Ustawienia i motywy | 📋 |
+| 🖥️ Wiele monitorów | 📋 |
 
 ✅ gotowe · 🚧 w trakcie · 📋 planowane
 
@@ -77,16 +68,12 @@ Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, s
 
 ## 🗺️ Roadmapa
 
-- [x] Pulpit i tapeta
-- [x] Dock i menu Windows
-- [x] Panel aplikacji
-- [x] Zasobnik systemowy
-- [x] Alt+Tab, kropki macOS, zrzuty ekranu
+- [x] Pulpit, dock, panel aplikacji
+- [x] Zasobnik i Alt+Tab
 - [x] Menedżer plików
 - [x] Terminal, Kalkulator, Sklep
-- [ ] Spotify przez API
 - [ ] Powiadomienia
-- [ ] Okno ustawień i motywy (JSON)
+- [ ] Ustawienia i motywy
 - [ ] Wiele monitorów
 
 ## 🧩 Struktura
