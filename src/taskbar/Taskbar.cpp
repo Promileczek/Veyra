@@ -2,6 +2,7 @@
 #include "../core/Accent.h"
 #include "../core/Settings.h"
 #include "../core/WorkArea.h"
+#include "../desktop/DesktopItems.h"
 #include "../files/FileWindow.h"
 #include <knownfolders.h>
 #include <shlobj.h>
@@ -46,7 +47,8 @@ bool Taskbar::Create(HINSTANCE inst, Graphics& g) {
     if (!hwnd_) return false;
     dpi_ = GetDpiForWindow(hwnd_);
 
-    if (!(theme_.acrylic && SetBackdrop(hwnd_, Backdrop::Acrylic, theme_.acrylicTint)))
+    // Dock rysuje własne szkło (DrawGlass): akryl DWM ignoruje zaokrąglony region i zostawiał kwadratowe rogi
+    if (!IsDock() && !(theme_.acrylic && SetBackdrop(hwnd_, Backdrop::Acrylic, theme_.acrylicTint)))
         theme_.background.a = 0.95f;  // bez rozmycia: prawie nieprzezroczyste tło
     if (!CreateDeviceResources()) return false;
 
@@ -120,6 +122,8 @@ bool Taskbar::CreateDeviceResources() {
 }
 
 void Taskbar::RecoverDevice() {
+    glassStrip_.Reset();
+    glassBlur_.Reset();
     surface_ = Surface{};
     brush_.Reset();
     icons_.clear();
@@ -292,8 +296,9 @@ void Taskbar::Render() {
 
     dc->Clear(D2D1::ColorF(0, 0, 0, 0));
     if (dock) {
-        // Okno ma zaokrąglony region (WM_SIZE), więc akryl DWM też jest zaokrąglony.
+        // Szkło: rozmyta tapeta przycięta do zaokrąglonego kształtu (gładkie rogi, bez regionu okna)
         const auto shape = D2D1::RoundedRect({px / 2, px / 2, W - px / 2, H - px / 2}, theme_.dockRadius, theme_.dockRadius);
+        DrawGlass(dc, shape);
         brush_->SetColor(theme_.dockBackground);
         dc->FillRoundedRectangle(shape, brush_.Get());
         brush_->SetColor(theme_.dockBorder);
@@ -415,6 +420,48 @@ LRESULT CALLBACK Taskbar::WinKeyHook(int code, WPARAM wp, LPARAM lp) {
         }
     }
     return CallNextHookEx(nullptr, code, wp, lp);
+}
+
+// Szkło docka: dolny pas tapety (cała szerokość monitora — dock zmienia szerokość, więc pas liczymy raz), rozmyty,
+// przycięty do kształtu docka + przyciemnienie. Odświeżane po zmianie tapety albo monitora.
+void Taskbar::DrawGlass(ID2D1DeviceContext* dc, const D2D1_ROUNDED_RECT& shape) {
+    RECT win{};
+    GetWindowRect(hwnd_, &win);
+    MONITORINFO mi{sizeof(mi)};
+    GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY), &mi);
+    const RECT& m = mi.rcMonitor;
+    if (!glassBlur_ || !EqualRect(&m, &glassMonitor_)) {
+        glassStrip_.Reset();
+        glassBlur_.Reset();
+        glassMonitor_ = m;
+        const UINT mw = static_cast<UINT>(m.right - m.left), mh = static_cast<UINT>(m.bottom - m.top);
+        const UINT stripH = std::min<UINT>(mh, static_cast<UINT>(std::lround((theme_.dockHeight + theme_.dockMargin + 60.f) * dpi_ / 96.f)));
+        ComPtr<IWICBitmapClipper> clip;
+        if (ComPtr<IWICBitmapSource> wall = LoadWallpaper(g_->WIC(), mw, mh); wall && SUCCEEDED(g_->WIC()->CreateBitmapClipper(&clip))) {
+            const WICRect rc{0, static_cast<INT>(mh - stripH), static_cast<INT>(mw), static_cast<INT>(stripH)};
+            const auto props = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+                                                      static_cast<float>(dpi_), static_cast<float>(dpi_));
+            if (SUCCEEDED(clip->Initialize(wall.Get(), &rc)) && SUCCEEDED(dc->CreateBitmapFromWicBitmap(clip.Get(), &props, &glassStrip_)) &&
+                SUCCEEDED(dc->CreateEffect(CLSID_D2D1GaussianBlur, &glassBlur_))) {
+                glassBlur_->SetInput(0, glassStrip_.Get());
+                glassBlur_->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, 22.f);
+                glassBlur_->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+            }
+        }
+        glassStripTop_ = m.bottom - static_cast<LONG>(stripH);
+    }
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    ComPtr<ID2D1RoundedRectangleGeometry> geo;
+    if (FAILED(factory->CreateRoundedRectangleGeometry(shape, &geo))) return;
+    dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), geo.Get()), nullptr);
+    if (glassBlur_) {
+        const float k = 96.f / dpi_;  // piksele → DIP
+        dc->DrawImage(glassBlur_.Get(), D2D1::Point2F((m.left - win.left) * k, (glassStripTop_ - win.top) * k));
+    }
+    brush_->SetColor(D2D1::ColorF(0.10f, 0.10f, 0.12f, glassBlur_ ? 0.45f : 0.92f));
+    dc->FillRoundedRectangle(shape, brush_.Get());
+    dc->PopLayer();
 }
 
 void Taskbar::ToggleStartMenu() {
@@ -611,10 +658,6 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         if (surface_.Context()) surface_.Resize(LOWORD(lp), HIWORD(lp));
         widthDip_ = LOWORD(lp) * 96.f / dpi_;
         heightDip_ = HIWORD(lp) * 96.f / dpi_;
-        if (IsDock()) {
-            const int d = static_cast<int>(std::lround(theme_.dockRadius * 2 * dpi_ / 96.f));
-            SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, LOWORD(lp) + 1, HIWORD(lp) + 1, d, d), TRUE);
-        }
         RequestRedraw();
         return 0;
     case WM_DPICHANGED:
@@ -695,6 +738,13 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kHotkeySnip) {
             tooltip_.Hide();
             snip_.Start(inst_);
+        }
+        return 0;
+    case WM_SETTINGCHANGE:
+        if (wp == SPI_SETDESKWALLPAPER) {  // nowa tapeta → nowe szkło
+            glassStrip_.Reset();
+            glassBlur_.Reset();
+            RequestRedraw();
         }
         return 0;
     case WM_START_KEY:

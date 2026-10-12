@@ -199,11 +199,11 @@ protected:
             const std::wstring name = wallpaper_.empty() ? L"Brak tapety" : wallpaper_.substr(wallpaper_.find_last_of(L'\\') + 1);
             Text(dc, L"Bieżąca tapeta", titleFormat_.Get(), {prev.right + 20.f, y + 4.f, R, y + 26.f}, White(0.95f));
             Text(dc, name, descFormat_.Get(), {prev.right + 20.f, y + 26.f, R, y + 46.f}, White(0.55f));
-            Text(dc, L"Kliknij obraz poniżej, aby ustawić go jako tapetę. Lista: tapety Veyry, tapety Windows i folder Obrazy.",
+            Text(dc, L"Kliknij obraz poniżej, aby ustawić go jako tapetę Veyry.",
                  wrapFormat_.Get(), {prev.right + 20.f, y + 50.f, R, y + 100.f}, White(0.45f));
             y += ph + 22.f;
 
-            Label(dc, L"DOSTĘPNE OBRAZY", L, y);
+            Label(dc, L"TAPETY VEYRY", L, y);
             y += 24.f;
             if (thumbs_.empty()) {
                 Text(dc, thumbsDone_ ? L"Nie znaleziono obrazów" : L"Wczytywanie…", descFormat_.Get(), {L, y, R, y + 20.f}, White(0.5f));
@@ -413,16 +413,11 @@ protected:
                 } while (FindNextFileW(h, &fd));
                 FindClose(h);
             };
-            scan(ExeDir() + L"wallpapers", 0, scan);  // tapety Veyry na początku listy
-            wchar_t win[MAX_PATH]{};
-            GetWindowsDirectoryW(win, MAX_PATH);
-            scan(std::wstring(win) + L"\\Web\\Wallpaper", 1, scan);
-            PWSTR pics = nullptr;
-            if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &pics))) scan(pics, 0, scan);
-            CoTaskMemFree(pics);
-            const std::wstring current = CurrentWallpaper();
-            if (!current.empty() && std::none_of(files.begin(), files.end(), [&](const std::wstring& f) { return _wcsicmp(f.c_str(), current.c_str()) == 0; }))
-                files.insert(files.begin(), current);
+            scan(ExeDir() + L"wallpapers", 0, scan);  // tylko tapety Veyry (na życzenie użytkownika)
+            std::sort(files.begin(), files.end(), [](const std::wstring& a, const std::wstring& b) {  // domyślna pierwsza
+                const bool da = a.find(L"veyra-domyslna") != std::wstring::npos, db = b.find(L"veyra-domyslna") != std::wstring::npos;
+                return da != db ? da : _wcsicmp(a.c_str(), b.c_str()) < 0;
+            });
 
             ComPtr<IWICImagingFactory> wic;
             CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));

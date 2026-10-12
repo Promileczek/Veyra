@@ -156,6 +156,10 @@ Mieszanka stylów: **Windows 11 + Windows 10 + KDE Plasma + Liquid Glass (iOS)**
     - `veyra-gory.jpg` — nocny krajobraz: zorza, gwiazdy, góry o ostrych graniach (przesunięcie punktu środkowego), las świerków,
     - `veyra-zorza.jpg` — czarne tło z niebieską i zieloną smugą (pierwsza wersja).
     Kopiowane przy budowaniu do `build\wallpapers`; domyślna ustawiana przy pierwszym starcie powłoki (flaga `defaultWallpaperApplied` — potem nie nadpisuje wyboru użytkownika).
+  - **Dock — własne szkło**: akryl DWM (`SetWindowCompositionAttribute`) ignorował zaokrąglony region okna, więc w górnych rogach były ciemne kwadraty. Dock nie ma już regionu ani akrylu: rysuje rozmyty dolny pas tapety (`DrawGlass`: `LoadWallpaper` → wycinek całej szerokości monitora → `GaussianBlur` 22, liczony raz, odświeżany po `SPI_SETDESKWALLPAPER`) przycięty do zaokrąglonego kształtu z gładkimi krawędziami + przyciemnienie.
+  - **Wiersz polecenia → Terminal, Kalkulator Windows → Kalkulator Veyry** w panelu aplikacji i wyszukiwarce (wpisy `…\cmd.exe` i `Microsoft.WindowsCalculator_…` pomijane; dodane Terminal, Kalkulator, Sklep, Ustawienia z dodatkowymi słowami: „cmd”, „wiersz polecenia”, „calc”…). Samego `cmd.exe` w systemie nie podmieniamy — używają go skrypty Windows i sam Terminal Veyry.
+  - **Kropki po jednej stronie — po prawej** we wszystkich oknach Veyry (Terminal, Kalkulator, Sklep, Ustawienia, okno plików, panel „Pliki”), tak jak nakładki na cudzych oknach (tam muszą zakrywać prawdziwe przyciski po prawej). Nowy folder i „wstecz” przesunięte obok.
+  - **Ustawienia → Personalizacja: tylko tapety Veyry** (domyślna pierwsza).
   - Testy bez przeszkadzania: zrzuty okien aplikacji przez `PrintWindow` (nie zrzut ekranu — okno bywa pod przeglądarką użytkownika).
   - Kod wysłany do repozytorium GitHub: https://github.com/Promileczek/Veyra (README należy do użytkownika — bez zmian).
 

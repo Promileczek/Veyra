@@ -110,9 +110,9 @@ void FilesWidget::SetFocused(bool f) {
 
 void FilesWidget::UpdateViewBounds() { view_.SetBounds({rect_.left + 2.f, rect_.top + kHeader, rect_.right - 2.f, rect_.bottom - 8.f}); }
 
-D2D1_RECT_F FilesWidget::BackButton() const { return {rect_.left + 78.f, rect_.top + 6.f, rect_.left + 106.f, rect_.top + kHeader - 6.f}; }
+D2D1_RECT_F FilesWidget::BackButton() const { return {rect_.left + 10.f, rect_.top + 6.f, rect_.left + 38.f, rect_.top + kHeader - 6.f}; }
 
-D2D1_RECT_F FilesWidget::NewFolderButton() const { return {rect_.right - 40.f, rect_.top + 6.f, rect_.right - 12.f, rect_.top + kHeader - 6.f}; }
+D2D1_RECT_F FilesWidget::NewFolderButton() const { return {rect_.right - 100.f, rect_.top + 6.f, rect_.right - 72.f, rect_.top + kHeader - 6.f}; }
 
 bool FilesWidget::Contains(D2D1_POINT_2F p) const {
     const D2D1_RECT_F b = Bounds();

@@ -44,7 +44,7 @@ private:
     enum class Drag { None, Move, Resize, View };
     enum Edge { EdgeNone = 0, EdgeLeft = 1, EdgeRight = 2, EdgeTop = 4, EdgeBottom = 8 };
     int EdgeAt(D2D1_POINT_2F p) const;
-    D2D1_POINT_2F LightsOrigin() const { return {rect_.left + 18.f, rect_.top + 20.f}; }
+    D2D1_POINT_2F LightsOrigin() const { return {rect_.right - 58.f, rect_.top + 20.f}; }  // po prawej, jak w oknach
     D2D1_RECT_F BackButton() const;
     D2D1_RECT_F NewFolderButton() const;
     void UpdateViewBounds();

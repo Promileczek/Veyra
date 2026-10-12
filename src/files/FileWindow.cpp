@@ -17,7 +17,6 @@ constexpr UINT_PTR kReloadTimer = 1;
 
 // Układ (DIP)
 constexpr float kSidebarW = 196.f, kToolbarH = 52.f, kStatusH = 26.f, kSideRow = 28.f, kBorder = 6.f;
-constexpr D2D1_POINT_2F kLights{20.f, 26.f};
 const D2D1_COLOR_F kBg{0.11f, 0.11f, 0.13f, 1.f};
 const D2D1_COLOR_F kSideBg{0.15f, 0.15f, 0.18f, 1.f};
 const D2D1_COLOR_F kLine{1.f, 1.f, 1.f, 0.08f};
@@ -192,7 +191,7 @@ int FileWindow::HitTest(D2D1_POINT_2F p) const {
     if (Inside(ToolButton(0), p)) return HitBack;
     if (Inside(ToolButton(1), p)) return HitForward;
     if (Inside(ToolButton(2), p)) return HitUp;
-    if (Inside({widthDip_ - 46.f, 12.f, widthDip_ - 14.f, 40.f}, p)) return HitNewFolder;
+    if (Inside({widthDip_ - 120.f, 12.f, widthDip_ - 88.f, 40.f}, p)) return HitNewFolder;
     if (p.x < kSidebarW && p.y >= kToolbarH) {
         const int row = static_cast<int>((p.y - kToolbarH) / kSideRow);
         if (row >= 0 && row < static_cast<int>(sidebar_.size()) && !sidebar_[static_cast<size_t>(row)].parsing.empty()) return row;
@@ -230,7 +229,7 @@ void FileWindow::Render() {
     // Pasek boczny
     fill({0.f, 0.f, kSidebarW, H}, kSideBg);
     fill({kSidebarW - 1.f, 0.f, kSidebarW, H}, kLine);
-    TrafficLights::Draw(dc, brush_.Get(), kLights, hoverLights_, active_);
+    TrafficLights::Draw(dc, brush_.Get(), Lights(), hoverLights_, active_);
     const std::wstring current = view_.FolderParsing();
     for (size_t i = 0; i < sidebar_.size(); ++i) {
         SidebarEntry& e = sidebar_[i];
@@ -263,8 +262,8 @@ void FileWindow::Render() {
         brush_->SetColor(enabled[i] ? kText : D2D1::ColorF(1.f, 1.f, 1.f, 0.25f));
         dc->DrawText(&glyphs[i], 1, glyphFormat_.Get(), b, brush_.Get());
     }
-    text(view_.FolderName(), titleFormat_.Get(), {ToolButton(2).right + 14.f, 0.f, W - 60.f, kToolbarH}, kText);
-    const D2D1_RECT_F nf{W - 46.f, 12.f, W - 14.f, 40.f};
+    text(view_.FolderName(), titleFormat_.Get(), {ToolButton(2).right + 14.f, 0.f, W - 128.f, kToolbarH}, kText);
+    const D2D1_RECT_F nf{W - 120.f, 12.f, W - 88.f, 40.f};  // obok kropek
     if (hover_ == HitNewFolder) fill(nf, D2D1::ColorF(1.f, 1.f, 1.f, 0.08f), 6.f);
     const wchar_t newFolder = L'\xE8F4';
     brush_->SetColor(kText);
@@ -285,6 +284,9 @@ void FileWindow::Render() {
         brush_.Reset();
     }
 }
+
+// Kropki po prawej, jak w pozostałych oknach
+D2D1_POINT_2F FileWindow::Lights() const { return {widthDip_ - 58.f, 26.f}; }
 
 LRESULT CALLBACK FileWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_NCCREATE) {
@@ -331,7 +333,7 @@ LRESULT FileWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             if (b) return HTBOTTOM;
         }
         const D2D1_POINT_2F p{x, y};
-        if (y < kToolbarH && TrafficLights::HitTest(kLights, p) < 0 && HitTest(p) == HitNone) return HTCAPTION;
+        if (y < kToolbarH && TrafficLights::HitTest(Lights(), p) < 0 && HitTest(p) == HitNone) return HTCAPTION;
         return HTCLIENT;
     }
     case WM_ACTIVATE:
@@ -378,8 +380,8 @@ LRESULT FileWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             trackingMouse_ = TrackMouseEvent(&tme) != FALSE;
         }
         const D2D1_POINT_2F p = ToDip(lp);
-        const bool lights = TrafficLights::HitTest(kLights, p) >= 0 ||
-                            (p.y < kToolbarH && p.x >= kLights.x - 10.f && p.x <= kLights.x + 50.f);
+        const bool lights = TrafficLights::HitTest(Lights(), p) >= 0 ||
+                            (p.y < kToolbarH && p.x >= Lights().x - 10.f && p.x <= Lights().x + 50.f);
         const int hit = HitTest(p);
         if (lights != hoverLights_ || hit != hover_) {
             hoverLights_ = lights;
@@ -398,7 +400,7 @@ LRESULT FileWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_LBUTTONDOWN: {
         const D2D1_POINT_2F p = ToDip(lp);
-        switch (TrafficLights::HitTest(kLights, p)) {
+        switch (TrafficLights::HitTest(Lights(), p)) {
         case 0: PostMessageW(hwnd_, WM_CLOSE, 0, 0); return 0;
         case 1: ShowWindow(hwnd_, SW_MINIMIZE); return 0;
         case 2: ShowWindow(hwnd_, IsZoomed(hwnd_) ? SW_RESTORE : SW_MAXIMIZE); return 0;

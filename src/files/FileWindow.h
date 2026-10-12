@@ -39,6 +39,7 @@ private:
     void RequestRedraw();
     int HitTest(D2D1_POINT_2F p) const;  // przyciski paska narzędzi / wpisy paska bocznego (>= 0)
     D2D1_POINT_2F ToDip(LPARAM lp) const;
+    D2D1_POINT_2F Lights() const;  // środek pierwszej kropki
 
     HWND hwnd_ = nullptr;
     HINSTANCE inst_ = nullptr;

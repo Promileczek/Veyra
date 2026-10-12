@@ -43,6 +43,7 @@ private:
     float TrayWidthDip() const;
     void ToggleTrayFlyout();
     void ToggleStartMenu();
+    void DrawGlass(ID2D1DeviceContext* dc, const D2D1_ROUNDED_RECT& shape);
     static LRESULT CALLBACK WinKeyHook(int code, WPARAM wp, LPARAM lp);
     void ToggleDesktop();
     void UpdateTooltip();
@@ -103,6 +104,11 @@ private:
     D2D1_RECT_F trayRect_{};  // przycisk "Tray" (pusty, gdy zasobnik nieaktywny)
 
     ComPtr<ID2D1SolidColorBrush> brush_;
+    // Szkło docka: rozmyty dolny pas tapety
+    ComPtr<ID2D1Bitmap> glassStrip_;
+    ComPtr<ID2D1Effect> glassBlur_;
+    RECT glassMonitor_{};
+    LONG glassStripTop_ = 0;
     ComPtr<IDWriteTextFormat> clockFormat_;
     std::unordered_map<HWND, AppIcon> icons_;
 };

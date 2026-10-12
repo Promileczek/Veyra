@@ -9,7 +9,6 @@
 namespace {
 constexpr UINT WM_REDRAW = WM_APP + 1;
 constexpr float kBorder = 6.f;
-constexpr D2D1_POINT_2F kLights{20.f, 20.f};
 }  // namespace
 
 bool AppWindow::Create(HINSTANCE inst, Graphics& g, const Options& o) {
@@ -125,8 +124,8 @@ void AppWindow::Render() {
     ID2D1DeviceContext* dc = surface_.Begin();
     if (!dc || !brush_) return;
     Paint(dc);
-    if (showTitle_) Text(dc, title_, titleFormat_.Get(), {90.f, 0.f, widthDip_ - 90.f, titleH_}, D2D1::ColorF(1.f, 1.f, 1.f, active_ ? 0.85f : 0.5f));
-    TrafficLights::Draw(dc, brush_.Get(), kLights, hoverLights_, active_);
+    if (showTitle_) Text(dc, title_, titleFormat_.Get(), {80.f, 0.f, widthDip_ - 80.f, titleH_}, D2D1::ColorF(1.f, 1.f, 1.f, active_ ? 0.85f : 0.5f));
+    TrafficLights::Draw(dc, brush_.Get(), Lights(), hoverLights_, active_);
     if (!surface_.End()) {  // urządzenie utracone — odtworzenie przy następnym rysowaniu
         RECT rc{};
         GetClientRect(hwnd_, &rc);
@@ -139,6 +138,9 @@ void AppWindow::Render() {
         }
     }
 }
+
+// Kropki po prawej (jak na oknach innych programów): grupa kończy się 12 DIP od prawej krawędzi
+D2D1_POINT_2F AppWindow::Lights() const { return {widthDip_ - 58.f, 20.f}; }
 
 D2D1_POINT_2F AppWindow::ToDip(LPARAM lp) const { return {GET_X_LPARAM(lp) * 96.f / dpi_, GET_Y_LPARAM(lp) * 96.f / dpi_}; }
 
@@ -187,7 +189,7 @@ LRESULT AppWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             if (t) return HTTOP;
             if (b) return HTBOTTOM;
         }
-        if (TrafficLights::HitTest(kLights, p) < 0 && IsCaption(p)) return HTCAPTION;
+        if (TrafficLights::HitTest(Lights(), p) < 0 && IsCaption(p)) return HTCAPTION;
         return HTCLIENT;
     }
     case WM_NCRBUTTONUP:
@@ -245,7 +247,7 @@ LRESULT AppWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             trackingMouse_ = TrackMouseEvent(&tme) != FALSE;
         }
         const D2D1_POINT_2F p = ToDip(lp);
-        const bool lights = p.y < titleH_ && p.x >= kLights.x - 10.f && p.x <= kLights.x + 50.f;
+        const bool lights = p.y < titleH_ && p.x >= Lights().x - 10.f && p.x <= Lights().x + 50.f;
         if (lights != hoverLights_) {
             hoverLights_ = lights;
             Redraw();
@@ -265,7 +267,7 @@ LRESULT AppWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONDOWN: {
         const D2D1_POINT_2F p = ToDip(lp);
         if (msg == WM_LBUTTONDOWN) {
-            switch (TrafficLights::HitTest(kLights, p)) {
+            switch (TrafficLights::HitTest(Lights(), p)) {
             case 0: PostMessageW(hwnd_, WM_CLOSE, 0, 0); return 0;
             case 1: ShowWindow(hwnd_, SW_MINIMIZE); return 0;
             case 2:

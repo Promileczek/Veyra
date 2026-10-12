@@ -118,8 +118,32 @@ void AppLauncher::LoadAllApps() {
     ComPtr<IShellItem> child;
     while (items->Next(1, &child, nullptr) == S_OK) {
         Entry e;
-        if (MakeEntry(child, e)) allApps_.push_back(std::move(e));
+        // Wiersz polecenia i Kalkulator Windows zastępują aplikacje Veyry (niżej)
+        const bool replaced = MakeEntry(child, e) && ((e.key.size() >= 8 && _wcsicmp(e.key.c_str() + e.key.size() - 8, L"\\cmd.exe") == 0) ||
+                                                      e.key.rfind(L"Microsoft.WindowsCalculator_", 0) == 0);
+        if (!e.key.empty() && !replaced) allApps_.push_back(std::move(e));
         child.Reset();
+    }
+    // Aplikacje Veyry (obok exploder.exe) — z dodatkowymi słowami do wyszukiwania ("cmd" znajduje Terminal)
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring dir = exe;
+    dir = dir.substr(0, dir.find_last_of(L'\\') + 1);
+    const struct {
+        const wchar_t* file;
+        const wchar_t* name;
+        const wchar_t* keywords;
+    } veyra[] = {{L"exploder-terminal.exe", L"Terminal", L"cmd wiersz polecenia konsola powershell"},
+                 {L"exploder-calc.exe", L"Kalkulator", L"calc calculator liczydło"},
+                 {L"exploder-store.exe", L"Sklep", L"store winget programy instaluj"},
+                 {L"exploder-settings.exe", L"Ustawienia", L"settings tapeta opcje"}};
+    for (const auto& app : veyra) {
+        ComPtr<IShellItem> item;
+        Entry e;
+        if (FAILED(SHCreateItemFromParsingName((dir + app.file).c_str(), nullptr, IID_PPV_ARGS(&item))) || !MakeEntry(item, e)) continue;
+        e.name = app.name;
+        e.lower = Lower(std::wstring(app.name) + L" " + app.keywords);
+        allApps_.push_back(std::move(e));
     }
     std::sort(allApps_.begin(), allApps_.end(), [](const Entry& a, const Entry& b) {
         return CompareStringEx(LOCALE_NAME_USER_DEFAULT, LINGUISTIC_IGNORECASE, a.name.c_str(), -1, b.name.c_str(), -1, nullptr,

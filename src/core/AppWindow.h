@@ -60,6 +60,7 @@ private:
     LRESULT HandleMessage(UINT msg, WPARAM wp, LPARAM lp);
     void Render();
     D2D1_POINT_2F ToDip(LPARAM lp) const;
+    D2D1_POINT_2F Lights() const;  // środek pierwszej kropki
 
     Surface surface_;
     ComPtr<IDWriteTextFormat> titleFormat_;
