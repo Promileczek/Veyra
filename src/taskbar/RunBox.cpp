@@ -57,7 +57,7 @@ void RunBox::Paint(ID2D1DeviceContext* dc) {
     brush_->SetColor(kAccent);
     dc->DrawRoundedRectangle(D2D1::RoundedRect({kField.left + 0.5f, kField.top + 0.5f, kField.right - 0.5f, kField.bottom - 0.5f}, 8.f, 8.f),
                              brush_.Get(), 1.f);
-    const D2D1_RECT_F textRect{kField.left + 12.f, kField.top + 9.f, kField.right - 12.f, kField.bottom};
+    const D2D1_RECT_F textRect{kField.left + 12.f, kField.top, kField.right - 12.f, kField.bottom};  // format centruje w pionie
     if (selectAll_ && !text_.empty()) {
         ComPtr<IDWriteTextLayout> layout;
         g_->DWrite()->CreateTextLayout(text_.c_str(), static_cast<UINT32>(text_.size()), textFormat_.Get(), 1000.f, 30.f, &layout);
@@ -72,9 +72,17 @@ void RunBox::Paint(ID2D1DeviceContext* dc) {
     if (!error_.empty()) Text(dc, error_, smallFormat_.Get(), {16.f, 128.f, 256.f, 148.f}, D2D1::ColorF(1.f, 0.55f, 0.5f));
     else Text(dc, L"cmd → Terminal · calc → Kalkulator", smallFormat_.Get(), {16.f, 128.f, 256.f, 148.f}, kDim);
     Fill(dc, kOk, hover_ == 0 ? D2D1::ColorF(0.48f, 0.77f, 1.f) : kAccent, 8.f);
-    Text(dc, L"OK", textFormat_.Get(), {kOk.left + 36.f, kOk.top + 7.f, kOk.right, kOk.bottom}, D2D1::ColorF(0x0B1A26));
+    if (!buttonFormat_) {  // napisy przycisków: wyśrodkowane w obu osiach (format Popup centruje tylko w pionie)
+        g_->DWrite()->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                       12.5f, L"pl-PL", &buttonFormat_);
+        if (buttonFormat_) {
+            buttonFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            buttonFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+    Text(dc, L"OK", buttonFormat_.Get(), kOk, D2D1::ColorF(0x0B1A26));
     Fill(dc, kCancel, D2D1::ColorF(1.f, 1.f, 1.f, hover_ == 1 ? 0.16f : 0.09f), 8.f);
-    Text(dc, L"Anuluj", textFormat_.Get(), {kCancel.left + 26.f, kCancel.top + 7.f, kCancel.right, kCancel.bottom}, kText);
+    Text(dc, L"Anuluj", buttonFormat_.Get(), kCancel, kText);
 }
 
 void RunBox::OnMouseMove(D2D1_POINT_2F p) {

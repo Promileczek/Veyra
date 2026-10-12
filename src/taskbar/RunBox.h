@@ -21,6 +21,7 @@ private:
     bool Run();  // false = błąd (komunikat zostaje w okienku)
 
     std::wstring text_, error_;
+    ComPtr<IDWriteTextFormat> buttonFormat_;
     bool selectAll_ = false;  // ostatnia komenda zaznaczona — pierwszy znak ją zastępuje
     int hover_ = -1;          // 0 OK, 1 Anuluj
 };
