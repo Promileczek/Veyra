@@ -1,0 +1,8 @@
+# Wyniki budowania (build.bat buduje do %LOCALAPPDATA%\Exploder\build)
+build/
+out/
+*.obj
+*.pdb
+*.ilk
+*.exe
+__pycache__/
