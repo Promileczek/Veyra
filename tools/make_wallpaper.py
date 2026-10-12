@@ -1,5 +1,7 @@
 """Tapety Veyry (res/wallpapers/, 2560×1440, deterministyczne — ten sam wynik za każdym razem):
-  - veyra-gory.jpg  (domyślna) — nocny krajobraz: góry w kilku planach, mgła, las świerkowy, niebo z gwiazdami i zorzą,
+  - veyra-domyslna.jpg (domyślna) — górskie jezioro o zmierzchu, trochę przyciemnione,
+  - veyra-jezioro.jpg — to samo jezioro, jaśniejsze,
+  - veyra-gory.jpg — nocny krajobraz: góry w kilku planach, mgła, las świerkowy, niebo z gwiazdami i zorzą,
   - veyra-zorza.jpg — czarne tło z niebieską i turkusowo-zieloną smugą jak zorza.
 Uruchom: python tools/make_wallpaper.py"""
 from pathlib import Path
@@ -150,6 +152,86 @@ def landscape_wallpaper() -> np.ndarray:
     return 1.0 - np.exp(-img * 1.6)
 
 
+def lake_wallpaper() -> np.ndarray:
+    """Jaśniejsza: górskie jezioro o zmierzchu — błękit → turkus nad horyzontem, poświata, góry w planach, odbicie w wodzie."""
+    rng = np.random.default_rng(11)
+    water = 0.70  # linia brzegu (ułamek wysokości)
+    # Niebo
+    stops = [(0.00, (0.030, 0.090, 0.260)), (0.28, (0.080, 0.300, 0.580)), (0.46, (0.250, 0.660, 0.760)), (0.56, (0.560, 0.900, 0.820)),
+             (0.70, (0.620, 0.930, 0.860))]
+    sky = np.zeros((H, W, 3), np.float32)
+    for (a, ca), (b, cb) in zip(stops, stops[1:]):
+        t = np.clip((v - a) / (b - a), 0, 1)[..., None]
+        sel = ((v >= a) & (v <= b))[..., None]
+        sky = np.where(sel, np.array(ca) * (1 - t) + np.array(cb) * t, sky)
+    sky = np.where((v > stops[-1][0])[..., None], np.array(stops[-1][1]), sky)
+    img = sky.astype(np.float32)
+    # Poświata nad horyzontem (zachodzące słońce za górami)
+    glow = np.exp(-(((u - 0.62) / 0.25) ** 2 + ((v - 0.52) / 0.12) ** 2))
+    img += glow[..., None] * np.array([0.30, 0.38, 0.22])
+    # Obłoki: szum 2D (mała losowa siatka powiększona i rozmyta), rozciągnięty poziomo, tylko w środku nieba
+    def noise2d(gw, gh):
+        small = Image.fromarray((rng.random((gh, gw)) * 255).astype(np.uint8))
+        return np.asarray(small.resize((W, H), Image.BICUBIC), np.float32) / 255
+    clouds = 0.6 * noise2d(9, 18) + 0.3 * noise2d(24, 40) + 0.1 * noise2d(60, 90)
+    clouds = np.clip((clouds - 0.55) / 0.25, 0, 1) ** 1.5
+    band = np.exp(-((v - 0.30) / 0.12) ** 2)
+    img += (clouds * band)[..., None] * np.array([0.30, 0.42, 0.48])
+    # Gwiazdy tylko wysoko
+    n = 500
+    sx, sy = rng.integers(0, W, n), (rng.random(n) ** 2 * H * 0.25).astype(int)
+    for px, py, b in zip(sx, sy, rng.random(n) ** 3 * 0.6):
+        img[py, px] += b * (1 - py / (H * 0.25))
+    # Góry: od jasnego, zamglonego planu do ciemnego turkusu
+    rows = v[:, :1]
+    planes = [
+        (ridge(rng, 0.53, 0.12), np.array([0.280, 0.560, 0.620])),
+        (ridge(rng, 0.60, 0.10), np.array([0.120, 0.400, 0.420])),
+        (ridge(rng, 0.66, 0.06), np.array([0.050, 0.240, 0.230])),
+    ]
+    for line, color in planes:
+        line = np.minimum(line, water)
+        mask = (rows >= line[None, :]).astype(np.float32)
+        below = np.clip((rows - line[None, :]) / 0.10, 0, 1)
+        img = img * (1 - mask[..., None]) + (color * (1.0 - 0.20 * below[..., None])) * mask[..., None]
+        haze = np.exp(-((rows - (line[None, :] + 0.03)) / 0.02) ** 2) * mask * 0.22
+        img += haze[..., None] * np.array([0.10, 0.18, 0.18])
+    # Las na brzegu
+    shore = water - 0.012 - 0.006 * noise1d(rng, [2, 5, 11])
+    forest = np.zeros((H, W), np.float32)
+    xpos = 0
+    while xpos < W:
+        w_tree, h_tree = rng.integers(10, 26), rng.uniform(0.025, 0.065)
+        cx = xpos + w_tree // 2
+        top_y = shore[min(cx, W - 1)] - h_tree
+        x0, x1 = max(0, cx - w_tree), min(W, cx + w_tree)
+        rel = np.abs(np.arange(x0, x1) - cx) / w_tree
+        for yy in range(int(top_y * H), int(water * H) + 1):
+            frac = (yy / H - top_y) / h_tree
+            if frac >= 0:
+                forest[yy, x0:x1] = np.maximum(forest[yy, x0:x1], (rel <= min(1.0, frac) * (0.6 + 0.4 * ((frac * 5) % 1.0))).astype(np.float32))
+        xpos += int(w_tree * rng.uniform(0.6, 1.0))
+    forest = np.maximum(forest, ((rows >= shore[None, :]) & (rows < water)).astype(np.float32))
+    img = img * (1 - forest[..., None]) + np.array([0.015, 0.075, 0.060]) * forest[..., None]
+    # Jezioro: odbicie lustrzane z falowaniem, ciemniejsze i chłodniejsze
+    wy = int(water * H)
+    depth = H - wy
+    src_rows = (wy - 1 - np.arange(depth) * 1.0).astype(int).clip(0, wy - 1)
+    refl = img[src_rows].copy()
+    ripple = (np.sin(np.arange(depth)[:, None] * 0.9 + np.linspace(0, 40, W)[None, :]) * (2 + np.arange(depth)[:, None] * 0.02)).astype(int)
+    cols = (np.arange(W)[None, :] + ripple).clip(0, W - 1)
+    refl = refl[np.arange(depth)[:, None], cols]
+    fade = (0.75 - 0.35 * (np.arange(depth) / depth))[:, None, None]
+    img[wy:] = refl * fade * np.array([0.80, 0.97, 0.95]) + np.array([0.0, 0.03, 0.03])
+    img[wy:wy + 2] += 0.12  # jasna linia brzegu
+    vignette = 1.0 - 0.30 * (((u - 0.5) / 0.85) ** 2 + ((v - 0.5) / 0.85) ** 2)
+    img *= np.clip(vignette, 0.5, 1.0)[..., None]
+    return np.clip(img, 0, 1)
+
+
 if __name__ == "__main__":
+    lake = lake_wallpaper()
+    save(lake, "veyra-jezioro.jpg", 3)
+    save(np.clip(lake, 0, 1) ** 1.2 * 0.80, "veyra-domyslna.jpg", 3)  # domyślna: to samo jezioro, trochę ciemniejsze
     save(landscape_wallpaper(), "veyra-gory.jpg", 1)
     save(aurora_wallpaper(), "veyra-zorza.jpg", 7)

@@ -38,7 +38,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         wchar_t exe[MAX_PATH]{};
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
         std::wstring wallpaper = exe;
-        wallpaper = wallpaper.substr(0, wallpaper.find_last_of(L'\\') + 1) + L"wallpapers\\veyra-gory.jpg";
+        wallpaper = wallpaper.substr(0, wallpaper.find_last_of(L'\\') + 1) + L"wallpapers\\veyra-domyslna.jpg";
         if (GetFileAttributesW(wallpaper.c_str()) != INVALID_FILE_ATTRIBUTES &&
             SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wallpaper.data(), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE))
             Settings::SetBool(L"defaultWallpaperApplied", true);
