@@ -232,6 +232,6 @@ def lake_wallpaper() -> np.ndarray:
 if __name__ == "__main__":
     lake = lake_wallpaper()
     save(lake, "veyra-jezioro.jpg", 3)
-    save(np.clip(lake, 0, 1) ** 1.2 * 0.80, "veyra-domyslna.jpg", 3)  # domyślna: to samo jezioro, trochę ciemniejsze
+    save(np.clip(lake, 0, 1) ** 1.25 * 0.78, "veyra-domyslna.jpg", 3)  # domyślna: to samo jezioro, ciemniejsze (ale nie noc)
     save(landscape_wallpaper(), "veyra-gory.jpg", 1)
     save(aurora_wallpaper(), "veyra-zorza.jpg", 7)
