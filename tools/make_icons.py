@@ -44,22 +44,15 @@ def terminal():
 
 
 def calculator():
-    img = base((0x24, 0x26, 0x30), (0x12, 0x13, 0x18))  # własny styl kalkulatora: karta + fioletowe działania
+    img = base((0x30, 0x2C, 0x27), (0x22, 0x1F, 0x1B))  # grafit jak korpus kalkulatora
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([88, 80, S - 88, 176], radius=26, fill=(0x2E, 0x31, 0x3D))
+    d.rounded_rectangle([84, 76, S - 84, 178], radius=18, fill=(0x1A, 0x18, 0x15))
+    d.rounded_rectangle([94, 86, S - 94, 168], radius=12, fill=(0xA9, 0xB2, 0x93))  # wyświetlacz
     for i in range(9):
-        x, y = 88 + (i % 3) * 116, 200 + (i // 3) * 80
-        if i == 8:
-            grad = Image.new("RGBA", (100, 64))
-            gd = ImageDraw.Draw(grad)
-            for gx in range(100):
-                t = gx / 99
-                gd.line([(gx, 0), (gx, 64)], fill=(int(0x7C + (0x3D - 0x7C) * t), int(0x5C + (0x8B - 0x5C) * t), 0xFF, 255))
-            m = Image.new("L", (100, 64), 0)
-            ImageDraw.Draw(m).rounded_rectangle([0, 0, 99, 63], radius=20, fill=255)
-            img.paste(grad, (x, y), m)
-        else:
-            d.rounded_rectangle([x, y, x + 100, y + 64], radius=20, fill=(0x3A, 0x33, 0x5C) if i % 3 == 2 else (0x34, 0x37, 0x44))
+        x, y = 84 + (i % 3) * 118, 206 + (i // 3) * 82
+        amber = i % 3 == 2
+        d.rounded_rectangle([x, y + 6, x + 104, y + 70], radius=16, fill=(0xC8, 0x86, 0x30) if amber else (0x2C, 0x29, 0x25))
+        d.rounded_rectangle([x, y, x + 104, y + 64], radius=16, fill=(0xF2, 0xA5, 0x41) if amber else (0x3B, 0x37, 0x32))
     return img
 
 

@@ -1,6 +1,6 @@
-// Kalkulator Explodera — własny styl: jednolite ciemne tło, wynik na karcie z historią ostatnich obliczeń,
-// cyfry krojem Bahnschrift, zaokrąglone przyciski (działania fioletowe, "=" z gradientem fiolet→niebieski, C czerwone),
-// funkcje √x x² 1/x CE jako małe przyciski nad klawiaturą.
+// Kalkulator Explodera — wygląd klasycznego urządzenia: ciepły grafitowy korpus, matowy wyświetlacz jak LCD (szałwia),
+// kremowe cyfry, bursztynowe działania i "=", płaskie klawisze z dolną krawędzią (bez gradientów i poświat).
+// Górny rząd małych klawiszy: ± √x x² 1/x. Szerokie 0.
 // Klawiatura: cyfry, + - * /, przecinek/kropka, Enter/=, Backspace, Esc (C), Delete (CE), %, Ctrl+C / Ctrl+V.
 #include "../../src/core/AppWindow.h"
 #include <objbase.h>
@@ -20,21 +20,25 @@ enum class K { Digit, Comma, Percent, CE, C, Back, Inv, Sqr, Sqrt, Op, Equals, N
 struct Key {
     const wchar_t* label;
     K kind;
-    int style;     // 0 cyfra, 1 działanie, 2 "=", 3 kasowanie, 4 funkcja, 5 mały przycisk nad klawiaturą
-    int col, row;  // row -1 = rząd małych przycisków
+    int style;     // 0 cyfra, 1 działanie, 2 "=", 3 kasowanie, 4 funkcja, 5 mały klawisz w górnym rzędzie
+    int col, row;  // row -1 = rząd małych klawiszy
+    int span = 1;  // szerokość w kolumnach
 };
 constexpr int kCols = 4, kRows = 5;
 constexpr Key kKeys[] = {
-    {L"√x", K::Sqrt, 5, 0, -1}, {L"x²", K::Sqr, 5, 1, -1},      {L"1/x", K::Inv, 5, 2, -1},  {L"CE", K::CE, 5, 3, -1},
-    {L"C", K::C, 3, 0, 0},      {L"\xE750", K::Back, 4, 1, 0}, {L"%", K::Percent, 4, 2, 0}, {L"÷", K::Op, 1, 3, 0},
-    {L"7", K::Digit, 0, 0, 1},  {L"8", K::Digit, 0, 1, 1},     {L"9", K::Digit, 0, 2, 1},   {L"×", K::Op, 1, 3, 1},
-    {L"4", K::Digit, 0, 0, 2},  {L"5", K::Digit, 0, 1, 2},     {L"6", K::Digit, 0, 2, 2},   {L"−", K::Op, 1, 3, 2},
-    {L"1", K::Digit, 0, 0, 3},  {L"2", K::Digit, 0, 1, 3},     {L"3", K::Digit, 0, 2, 3},   {L"+", K::Op, 1, 3, 3},
-    {L"±", K::Negate, 4, 0, 4}, {L"0", K::Digit, 0, 1, 4},     {L",", K::Comma, 0, 2, 4},   {L"=", K::Equals, 2, 3, 4},
+    {L"±", K::Negate, 5, 0, -1},  {L"√x", K::Sqrt, 5, 1, -1},       {L"x²", K::Sqr, 5, 2, -1},    {L"1/x", K::Inv, 5, 3, -1},
+    {L"C", K::C, 3, 0, 0},        {L"\xE750", K::Back, 4, 1, 0},   {L"%", K::Percent, 4, 2, 0},  {L"÷", K::Op, 1, 3, 0},
+    {L"7", K::Digit, 0, 0, 1},    {L"8", K::Digit, 0, 1, 1},       {L"9", K::Digit, 0, 2, 1},    {L"×", K::Op, 1, 3, 1},
+    {L"4", K::Digit, 0, 0, 2},    {L"5", K::Digit, 0, 1, 2},       {L"6", K::Digit, 0, 2, 2},    {L"−", K::Op, 1, 3, 2},
+    {L"1", K::Digit, 0, 0, 3},    {L"2", K::Digit, 0, 1, 3},       {L"3", K::Digit, 0, 2, 3},    {L"+", K::Op, 1, 3, 3},
+    {L"0", K::Digit, 0, 0, 4, 2}, {L",", K::Comma, 0, 2, 4},       {L"=", K::Equals, 2, 3, 4},
 };
 constexpr int kKeyCount = static_cast<int>(std::size(kKeys));
 constexpr float kChipH = 30.f, kGap = 8.f, kPad = 14.f;
-const D2D1_COLOR_F kBg = D2D1::ColorF(0x121318), kCard = D2D1::ColorF(0x1B1D25), kViolet = D2D1::ColorF(0xA78BFA);
+// Paleta: grafit, krem, bursztyn, wyświetlacz w kolorze szałwii
+const D2D1_COLOR_F kBody = D2D1::ColorF(0x26231F), kKey = D2D1::ColorF(0x3B3732), kKeyFn = D2D1::ColorF(0x56514A),
+                   kCream = D2D1::ColorF(0xEDE6DA), kAmber = D2D1::ColorF(0xF2A541), kLcd = D2D1::ColorF(0xA9B293),
+                   kLcdInk = D2D1::ColorF(0x1F241C);
 
 D2D1_COLOR_F Shade(D2D1_COLOR_F c, float d) {
     return {std::clamp(c.r + d, 0.f, 1.f), std::clamp(c.g + d, 0.f, 1.f), std::clamp(c.b + d, 0.f, 1.f), c.a};
@@ -91,94 +95,52 @@ public:
     }
 
 protected:
-    // Pędzel liniowy (gradient) — tworzony na bieżąco, rysowanie jest rzadkie
-    ComPtr<ID2D1LinearGradientBrush> Gradient(ID2D1DeviceContext* dc, D2D1_POINT_2F a, D2D1_POINT_2F b, D2D1_COLOR_F c0, D2D1_COLOR_F c1) {
-        const D2D1_GRADIENT_STOP stops[] = {{0.f, c0}, {1.f, c1}};
-        ComPtr<ID2D1GradientStopCollection> coll;
-        ComPtr<ID2D1LinearGradientBrush> grad;
-        dc->CreateGradientStopCollection(stops, 2, &coll);
-        if (coll) dc->CreateLinearGradientBrush({a, b}, coll.Get(), &grad);
-        return grad;
-    }
-
     void Paint(ID2D1DeviceContext* dc) override {
-        const float W = widthDip_, H = heightDip_;
-        dc->Clear(kBg);
-        if (auto g = Gradient(dc, {0.f, 0.f}, {0.f, H}, D2D1::ColorF(0x171A26), D2D1::ColorF(0x0E0F14))) dc->FillRectangle({0.f, 0.f, W, H}, g.Get());
+        const float W = widthDip_;
+        dc->Clear(kBody);
 
-        // Karta z wynikiem: gradient, fioletowa poświata w rogu, akcent u dołu
-        const D2D1_RECT_F card{kPad, titleH_ + 2.f, W - kPad, ChipsTop() - kGap - 2.f};
-        const auto cardShape = D2D1::RoundedRect(card, 20.f, 20.f);
-        if (auto g = Gradient(dc, {card.left, card.top}, {card.right, card.bottom}, D2D1::ColorF(0x23263A), D2D1::ColorF(0x181A24)))
-            dc->FillRoundedRectangle(cardShape, g.Get());
-        {
-            const D2D1_GRADIENT_STOP stops[] = {{0.f, D2D1::ColorF(0x7C5CFF, 0.22f)}, {1.f, D2D1::ColorF(0x7C5CFF, 0.f)}};
-            ComPtr<ID2D1GradientStopCollection> coll;
-            ComPtr<ID2D1RadialGradientBrush> glow;
-            dc->CreateGradientStopCollection(stops, 2, &coll);
-            if (coll)
-                dc->CreateRadialGradientBrush(D2D1::RadialGradientBrushProperties({card.right - 30.f, card.top + 20.f}, {0.f, 0.f}, 160.f, 110.f),
-                                              coll.Get(), &glow);
-            if (glow) dc->FillRoundedRectangle(cardShape, glow.Get());
-        }
-        brush_->SetColor(D2D1::ColorF(1.f, 1.f, 1.f, 0.07f));
-        dc->DrawRoundedRectangle(D2D1::RoundedRect({card.left + 0.5f, card.top + 0.5f, card.right - 0.5f, card.bottom - 0.5f}, 20.f, 20.f),
-                                 brush_.Get(), 1.f);
-        if (auto g = Gradient(dc, {card.left + 24.f, 0.f}, {card.right - 24.f, 0.f}, D2D1::ColorF(0x7C5CFF), D2D1::ColorF(0x3D8BFF)))
-            dc->FillRoundedRectangle(D2D1::RoundedRect({card.left + 24.f, card.bottom - 3.f, card.right - 24.f, card.bottom - 1.f}, 1.f, 1.f), g.Get());
-
-        float hy = card.top + 12.f;
-        for (size_t i = 0; i < history_.size(); ++i, hy += 17.f)
-            Text(dc, history_[i], historyFormat_.Get(), {card.left + 16.f, hy, card.right - 18.f, hy + 16.f},
-                 D2D1::ColorF(1.f, 1.f, 1.f, 0.22f + 0.08f * static_cast<float>(i)));
-        Text(dc, expression_, exprFormat_.Get(), {card.left + 16.f, card.bottom - 88.f, card.right - 18.f, card.bottom - 66.f}, kViolet);
+        // Wyświetlacz: matowy panel jak LCD, ciemniejsza linia u góry (zagłębienie), ciemne cyfry
+        const D2D1_RECT_F lcd{kPad, titleH_ + 2.f, W - kPad, ChipsTop() - kGap - 4.f};
+        Fill(dc, {lcd.left - 3.f, lcd.top - 3.f, lcd.right + 3.f, lcd.bottom + 3.f}, D2D1::ColorF(0x1A1815), 13.f);  // ramka
+        Fill(dc, lcd, kLcd, 10.f);
+        Fill(dc, {lcd.left + 10.f, lcd.top + 1.f, lcd.right - 10.f, lcd.top + 3.f}, D2D1::ColorF(0x000000, 0.12f));
+        float hy = lcd.top + 10.f;
+        for (size_t i = 0; i < history_.size(); ++i, hy += 16.f)
+            Text(dc, history_[i], historyFormat_.Get(), {lcd.left + 14.f, hy, lcd.right - 14.f, hy + 15.f},
+                 D2D1::ColorF(kLcdInk.r, kLcdInk.g, kLcdInk.b, 0.35f + 0.12f * static_cast<float>(i)));
+        Text(dc, expression_, exprFormat_.Get(), {lcd.left + 14.f, lcd.bottom - 84.f, lcd.right - 14.f, lcd.bottom - 62.f},
+             D2D1::ColorF(kLcdInk.r, kLcdInk.g, kLcdInk.b, 0.7f));
         const float size = std::clamp(52.f * 11.f / std::max<size_t>(display_.size(), 11), 24.f, 52.f);
         if (size != bigSize_ || !bigFormat_) {
             bigSize_ = size;
             bigFormat_ = MakeFormat(L"Bahnschrift", size, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_TRAILING);
         }
-        Text(dc, display_, bigFormat_.Get(), {card.left + 12.f, card.bottom - 68.f, card.right - 18.f, card.bottom - 10.f}, D2D1::ColorF(1.f, 1.f, 1.f));
+        Text(dc, display_, bigFormat_.Get(), {lcd.left + 10.f, lcd.bottom - 66.f, lcd.right - 14.f, lcd.bottom - 8.f}, kLcdInk);
 
         for (int i = 0; i < kKeyCount; ++i) {
             const Key& k = kKeys[i];
             const D2D1_RECT_F r = KeyRect(i);
-            const float lift = i == pressed_ ? -0.03f : i == hover_ ? 0.05f : 0.f;
             const bool selectedOp = k.kind == K::Op && OpOf(k.label) == op_ && newEntry_ && op_ != Op::None;
-            D2D1_COLOR_F top = D2D1::ColorF(0x242733), bottom = D2D1::ColorF(0x1C1E27), fg = D2D1::ColorF(1.f, 1.f, 1.f, 0.95f);
+            D2D1_COLOR_F bg = kKey, fg = kCream;
             IDWriteTextFormat* f = digitFormat_.Get();
             switch (k.style) {
-            case 1:  // działania: fioletowy odcień, wybrane — pełny fiolet
-                top = selectedOp ? D2D1::ColorF(0x7C5CFF) : D2D1::ColorF(0x2E2850);
-                bottom = selectedOp ? D2D1::ColorF(0x5B45C9) : D2D1::ColorF(0x221E3A);
-                fg = selectedOp ? D2D1::ColorF(0xFFFFFF) : kViolet;
-                break;
-            case 2: top = D2D1::ColorF(0x8A6BFF), bottom = D2D1::ColorF(0x3D8BFF); break;
-            case 3: top = D2D1::ColorF(0x3A2129), bottom = D2D1::ColorF(0x2A1A20), fg = D2D1::ColorF(0xFF6B6B), f = keyFormat_.Get(); break;
-            case 4:
-                top = D2D1::ColorF(0x2B2E3B), bottom = D2D1::ColorF(0x22242F), fg = D2D1::ColorF(0xC9CCD6);
-                f = k.kind == K::Back ? glyphFormat_.Get() : keyFormat_.Get();
-                break;
+            case 1: fg = selectedOp ? kBody : kAmber, bg = selectedOp ? kAmber : kKey; break;
+            case 2: bg = kAmber, fg = kBody; break;
+            case 3: bg = kKeyFn, fg = D2D1::ColorF(0xFF8A5B), f = keyFormat_.Get(); break;
+            case 4: bg = kKeyFn, f = k.kind == K::Back ? glyphFormat_.Get() : keyFormat_.Get(); break;
+            case 5: bg = D2D1::ColorF(0x322E29), fg = D2D1::ColorF(0xCFC7B9), f = keyFormat_.Get(); break;
             default: break;
             }
-            if (k.style == 5) {  // małe funkcje: obrysowane pigułki
-                const float rad = kChipH / 2;
-                if (i == hover_) Fill(dc, r, D2D1::ColorF(1.f, 1.f, 1.f, 0.06f), rad);
-                brush_->SetColor(D2D1::ColorF(0x7C5CFF, i == hover_ ? 0.8f : 0.45f));
-                dc->DrawRoundedRectangle(D2D1::RoundedRect({r.left + 0.5f, r.top + 0.5f, r.right - 0.5f, r.bottom - 0.5f}, rad, rad), brush_.Get(), 1.f);
-                Text(dc, k.label, keyFormat_.Get(), r, D2D1::ColorF(0xC4B5FD));
-                continue;
-            }
-            const float radius = 18.f;
-            const auto shape = D2D1::RoundedRect(r, radius, radius);
-            const bool diagonal = k.style == 2;  // "=": gradient po skosie, reszta z góry na dół (głębia)
-            if (auto g = Gradient(dc, {r.left, r.top}, diagonal ? D2D1_POINT_2F{r.right, r.bottom} : D2D1_POINT_2F{r.left, r.bottom},
-                                  Shade(top, lift), Shade(bottom, lift)))
-                dc->FillRoundedRectangle(shape, g.Get());
-            // Jaśniejsza krawędź u góry — przycisk wygląda na lekko wypukły
-            if (auto g = Gradient(dc, {r.left, r.top}, {r.left, r.bottom}, D2D1::ColorF(1.f, 1.f, 1.f, 0.10f), D2D1::ColorF(1.f, 1.f, 1.f, 0.f)))
-                dc->DrawRoundedRectangle(D2D1::RoundedRect({r.left + 0.5f, r.top + 0.5f, r.right - 0.5f, r.bottom - 0.5f}, radius, radius), g.Get(), 1.f);
-            if (k.kind == K::Op || k.kind == K::Equals || k.kind == K::Negate) DrawSymbol(dc, k.label, r, fg);
-            else Text(dc, k.label, f, r, fg);
+            const float radius = k.style == 5 ? 8.f : 12.f;
+            const bool down = i == pressed_;
+            const float shift = down ? 2.f : 0.f;  // wciśnięty klawisz "opada" na dolną krawędź
+            // Dolna krawędź (klawisz fizyczny), potem wierzch
+            Fill(dc, {r.left, r.top + 2.f, r.right, r.bottom}, Shade(bg, -0.10f), radius);
+            const D2D1_RECT_F face{r.left, r.top + shift, r.right, r.bottom - 2.f + shift};
+            Fill(dc, face, Shade(bg, i == hover_ && !down ? 0.05f : 0.f), radius);
+            if (k.kind == K::Op || k.kind == K::Equals || k.kind == K::Negate) DrawSymbol(dc, k.label, face, fg);
+            else if (k.span == 2) Text(dc, k.label, f, {face.left, face.top, face.left + (face.right - face.left) / 2, face.bottom}, fg);
+            else Text(dc, k.label, f, face, fg);
         }
     }
 
@@ -251,7 +213,13 @@ protected:
         case VK_RETURN: PressLabel(L"="); return true;
         case VK_ESCAPE: PressLabel(L"C"); return true;
         case VK_BACK: PressLabel(L"\xE750"); return true;
-        case VK_DELETE: PressLabel(L"CE"); return true;
+        case VK_DELETE: {  // CE (bez klawisza na ekranie)
+            display_ = L"0";
+            newEntry_ = true;
+            error_ = false;
+            Redraw();
+            return true;
+        }
         }
         return false;
     }
@@ -307,10 +275,11 @@ private:
         const Key& k = kKeys[i];
         const float w = (g.right - g.left - (kCols - 1) * kGap) / kCols;
         const float x = g.left + k.col * (w + kGap);
-        if (k.row < 0) return {x, ChipsTop(), x + w, ChipsTop() + kChipH};
+        const float kw = k.span * w + (k.span - 1) * kGap;
+        if (k.row < 0) return {x, ChipsTop(), x + kw, ChipsTop() + kChipH};
         const float h = (g.bottom - g.top - (kRows - 1) * kGap) / kRows;
         const float y = g.top + k.row * (h + kGap);
-        return {x, y, x + w, y + h};
+        return {x, y, x + kw, y + h};
     }
     int KeyAt(D2D1_POINT_2F p) const {
         for (int i = 0; i < kKeyCount; ++i)
