@@ -417,6 +417,7 @@ private:
         for (auto* s : {&u, &h}) std::transform(s->begin(), s->end(), s->begin(), ::towlower);
         const std::wstring prompt = L"$E[1;32m" + u + L"@" + h + L"$E[0m:$E[1;34m$P$E[0m$$ ";
         SetEnvironmentVariableW(L"PROMPT", prompt.c_str());
+        SetEnvironmentVariableW(L"COLORTERM", L"truecolor");  // programy (Claude Code, git…) wiedzą, że są pełne kolory
 
         const std::wstring macros = LocalAppDataDir() + L"\\terminal-aliasy.txt";
         if (HANDLE f = CreateFileW(macros.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -453,7 +454,12 @@ private:
         reader_ = std::thread([this, hwnd] {
             char buf[16384];
             DWORD got = 0;
+            // Diagnostyka: VEYRA_VT_LOG=ścieżka → surowe wyjście konsoli (sekwencje VT) dopisywane do pliku
+            wchar_t logPath[MAX_PATH]{};
+            FILE* log = nullptr;
+            if (GetEnvironmentVariableW(L"VEYRA_VT_LOG", logPath, MAX_PATH)) _wfopen_s(&log, logPath, L"ab");
             while (ReadFile(outRead_, buf, sizeof(buf), &got, nullptr) && got) {
+                if (log) fwrite(buf, 1, got, log), fflush(log);
                 bool post = false;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
@@ -462,6 +468,7 @@ private:
                 }
                 if (post) PostMessageW(hwnd, WM_PTY_OUTPUT, 0, 0);
             }
+            if (log) fclose(log);
         });
         waiter_ = std::thread([this, hwnd] {
             WaitForSingleObject(process_, INFINITE);

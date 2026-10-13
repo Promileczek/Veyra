@@ -1,5 +1,6 @@
 #include "TopBar.h"
 #include "../core/Accent.h"
+#include "../core/UiScale.h"
 #include "../core/WorkArea.h"
 #include <shellapi.h>
 #include <windowsx.h>
@@ -45,7 +46,7 @@ bool TopBar::Create(HINSTANCE inst, Graphics& g) {
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP, kClassName,
                             L"Exploder TopBar", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, inst, this);
     if (!hwnd_) return false;
-    dpi_ = GetDpiForWindow(hwnd_);
+    dpi_ = UiScale::Dpi(GetDpiForWindow(hwnd_));
     if (!SetBackdrop(hwnd_, Backdrop::Acrylic, theme_.acrylicTint)) theme_.dockBackground.a = 0.95f;
 
     IDWriteFactory* dw = g_->DWrite();
@@ -147,19 +148,39 @@ void TopBar::Layout() {
     netRect_ = {10.f, 4.f, 190.f, H - 4.f};
     volumeRect_ = {W - 86.f, 4.f, W - 10.f, H - 4.f};
 
-    // Środek: okładka | tytuł — wykonawca | ⏮ ⏯ ⏭ | postęp
-    const float block = 24.f + 8.f + 240.f + 8.f + 3 * 28.f + 10.f + 130.f;
+    // Środek: okładka | tytuł — wykonawca | ⏮ ⏯ ⏭ | postęp — zwarty blok zawsze na środku: szerokość tytułu
+    // dopasowana do tekstu (60–240), przyciski tuż za nim, pasek postępu tylko gdy znany czas utworu
+    const MediaState& m = mediaState_;
+    float titleW = TextWidth(L"Nic nie gra", smallFormat_.Get()) + 4.f;
+    bool progress = false;
+    if (m.hasSession) {
+        titleW = std::clamp(std::max(TextWidth(m.title.empty() ? L"(bez tytułu)" : m.title, textFormat_.Get()),
+                                     TextWidth(m.artist, smallFormat_.Get())) + 6.f, 60.f, 240.f);
+        progress = m.durationSec > 0.5;
+    }
+    const float controls = m.hasSession ? 8.f + 3 * 28.f : 0.f;
+    const float block = 24.f + 8.f + titleW + controls + (progress ? 10.f + 130.f : 0.f);
     float x = (W - block) / 2;
     mediaRect_ = {x - 6.f, 3.f, x + block + 6.f, H - 3.f};
     coverRect_ = {x, (H - 24.f) / 2, x + 24.f, (H + 24.f) / 2};
     x += 32.f;
-    titleRect_ = {x, 0.f, x + 240.f, H};
-    x += 248.f;
+    titleRect_ = {x, 0.f, x + titleW, H};
+    x += titleW + 8.f;
     prevRect_ = {x, 4.f, x + 28.f, H - 4.f};
     playRect_ = {x + 28.f, 4.f, x + 56.f, H - 4.f};
     nextRect_ = {x + 56.f, 4.f, x + 84.f, H - 4.f};
     x += 94.f;
     progressRect_ = {x, 0.f, x + 130.f, H};
+}
+
+float TopBar::TextWidth(const std::wstring& text, IDWriteTextFormat* format) const {
+    ComPtr<IDWriteTextLayout> layout;
+    if (text.empty() || !format ||
+        FAILED(g_->DWrite()->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), format, 2000.f, 100.f, &layout)))
+        return 0.f;
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    return metrics.widthIncludingTrailingWhitespace;
 }
 
 void TopBar::Glyph(wchar_t glyph, const D2D1_RECT_F& r, const D2D1_COLOR_F& color) {
@@ -343,6 +364,7 @@ LRESULT CALLBACK TopBar::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT TopBar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == UiScale::ChangedMessage()) msg = WM_DISPLAYCHANGE;  // nowa skala Veyry: jak zmiana ekranu
     switch (msg) {
     case WM_REDRAW:
         redrawPending_ = false;
@@ -363,12 +385,11 @@ LRESULT TopBar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_DPICHANGED:
-        dpi_ = HIWORD(wp);
+    case WM_DISPLAYCHANGE:  // też zmiana rozdzielczości: skala "auto" zależy od wielkości ekranu
+        UiScale::Reload();
+        dpi_ = UiScale::Dpi(msg == WM_DPICHANGED ? HIWORD(wp) : GetDpiForWindow(hwnd_));
         if (surface_.Context()) surface_.Context()->SetDpi(static_cast<float>(dpi_), static_cast<float>(dpi_));
         coverVersion_ = ~0u;
-        ReserveSpace();
-        return 0;
-    case WM_DISPLAYCHANGE:
         ReserveSpace();
         return 0;
     case WM_APPBAR:

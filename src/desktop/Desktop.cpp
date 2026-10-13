@@ -1,4 +1,5 @@
 #include "Desktop.h"
+#include "../core/UiScale.h"
 #include <knownfolders.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -66,7 +67,7 @@ bool Desktop::Create(HINSTANCE inst, Graphics& g, std::function<void(ComPtr<IShe
                             monitor_.left, monitor_.top, monitor_.right - monitor_.left, monitor_.bottom - monitor_.top,
                             nullptr, nullptr, inst, this);
     if (!hwnd_) return false;
-    dpi_ = GetDpiForWindow(hwnd_);
+    dpi_ = UiScale::Dpi(GetDpiForWindow(hwnd_));
     widthDip_ = (monitor_.right - monitor_.left) * 96.f / dpi_;
     heightDip_ = (monitor_.bottom - monitor_.top) * 96.f / dpi_;
 
@@ -270,7 +271,9 @@ void Desktop::UpdateWorkArea() {
 
     // Panel: wysokość dopasowana do liczby przypiętych, na środku obszaru roboczego. Przy szukaniu
     // rośnie w dół od tego samego miejsca (wyszukiwarka nie skacze).
-    const float lw = std::min(kLauncherW, work_.right - work_.left - 40.f);
+    // Na wąskim ekranie panel aplikacji się zwęża, żeby zmieściły się obok niego Pliki (320) i statystyki
+    const float room = work_.right - work_.left - 32.f - 320.f - 40.f - StatsWidget::kWidth;
+    const float lw = std::clamp(room, 360.f, std::max(360.f, std::min(kLauncherW, work_.right - work_.left - 40.f)));
     const float maxH = std::min(kLauncherH, work_.bottom - work_.top - 40.f);
     if (!launcher_.Searching()) {
         const float lh = launcher_.PreferredHeight(lw, maxH);
@@ -768,6 +771,7 @@ LRESULT CALLBACK Desktop::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT Desktop::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == UiScale::ChangedMessage()) msg = WM_DISPLAYCHANGE;  // nowa skala Veyry: jak zmiana ekranu
     if (LRESULT r = 0; files_.View().HandleMenuMessage(msg, wp, lp, r)) return r;
     if (activeMenu_ && (msg == WM_INITMENUPOPUP || msg == WM_DRAWITEM || msg == WM_MEASUREITEM)) {
         activeMenu_->HandleMenuMsg(msg, wp, lp);
@@ -799,7 +803,10 @@ LRESULT Desktop::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             RequestRedraw();
         }
         return 0;
+    case WM_DPICHANGED:  // też nowa skala Veyry (Ustawienia → Ekran)
     case WM_DISPLAYCHANGE: {
+        UiScale::Reload();
+        dpi_ = UiScale::Dpi(GetDpiForWindow(hwnd_));
         MONITORINFO mi{sizeof(mi)};
         GetMonitorInfoW(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
         monitor_ = mi.rcMonitor;
@@ -807,8 +814,8 @@ LRESULT Desktop::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         heightDip_ = (monitor_.bottom - monitor_.top) * 96.f / dpi_;
         SetWindowPos(hwnd_, HWND_BOTTOM, monitor_.left, monitor_.top, monitor_.right - monitor_.left,
                      monitor_.bottom - monitor_.top, SWP_NOACTIVATE);
+        UpdateWorkArea();  // najpierw nowe miejsca paneli — szkło pod nimi rysuje się razem z tapetą
         if (CreateResources()) DrawWallpaper();
-        UpdateWorkArea();
         AssignPositions();
         RequestRedraw();
         return 0;

@@ -243,13 +243,18 @@ try {
   S 'Instalowanie…'
   $hadExplorer = [bool](Get-Process explorer -ErrorAction SilentlyContinue)
   $hadShell = [bool](Get-Process exploder -ErrorAction SilentlyContinue)
-  Get-Process exploder, exploder-terminal, exploder-calc, exploder-store, exploder-settings -ErrorAction SilentlyContinue | Stop-Process -Force
+  # taskkill /f (kod wyjścia 1): po Stop-Process (kod -1) Windows sam uruchamia Eksplorator ponownie
+  & taskkill.exe /f /im exploder.exe /im exploder-terminal.exe /im exploder-calc.exe /im exploder-store.exe /im exploder-settings.exe 2>&1 | Out-Null
   Start-Sleep 1
   Copy-Item (Join-Path $bld '*.exe') $Dest -Force
   Copy-Item (Join-Path $bld '*.pdb') $Dest -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force (Join-Path $Dest 'wallpapers') | Out-Null
   if (Test-Path (Join-Path $bld 'wallpapers')) { Copy-Item (Join-Path $bld 'wallpapers\*') (Join-Path $Dest 'wallpapers') -Force }
-  if (-not $hadExplorer) { Start-Sleep 2; Get-Process explorer -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1 }
+  if (-not $hadExplorer) {  # Eksplorator potrafi wrócić sam — zamykamy, aż zniknie
+    for ($i = 0; $i -lt 5 -and (Get-Process explorer -ErrorAction SilentlyContinue); $i++) {
+      & taskkill.exe /f /im explorer.exe 2>&1 | Out-Null; Start-Sleep -Milliseconds 1500
+    }
+  }
   if ($hadShell) { Run (Join-Path $Dest 'exploder.exe') '' }
   S ('OK ' + $Version)
   Start-Sleep 2

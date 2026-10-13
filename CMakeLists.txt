@@ -31,6 +31,7 @@ add_executable(exploder WIN32
     src/shell/AltTab.cpp
     src/shell/WindowDots.cpp
     src/shell/ExplorerUi.cpp
+    src/shell/Notification.cpp
     src/taskbar/Taskbar.cpp
     src/taskbar/AppIcons.cpp
     src/taskbar/TrayFlyout.cpp
@@ -50,7 +51,7 @@ add_executable(exploder WIN32
 )
 
 target_compile_options(exploder PRIVATE /W4 /utf-8 /permissive-)
-target_link_libraries(exploder PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi shell32 user32 ole32 dxguid windowsapp iphlpapi wlanapi version ws2_32 shlwapi shcore dbghelp powrprof)
+target_link_libraries(exploder PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi shell32 user32 ole32 dxguid windowsapp iphlpapi wlanapi version ws2_32 shlwapi shcore dbghelp powrprof winhttp userenv)
 # Symbole (PDB) + mapa: awarię (crash.dmp / dziennik zdarzeń) da się przypisać do linijki kodu.
 # /OPT:REF /OPT:ICF jawnie — /DEBUG domyślnie je wyłącza, a nie chcemy większego exe.
 target_compile_options(exploder PRIVATE /Zi)

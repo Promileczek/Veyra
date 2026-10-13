@@ -3,13 +3,17 @@
 // System (Veyra zamiast Eksploratora po zalogowaniu, skróty do ustawień Windows), Informacje.
 // Zmiany zapisuje do settings.txt i rozsyła "VeyraSettingsChanged" — powłoka i terminal stosują je od razu.
 #include "../../src/core/AppWindow.h"
+#include "../../src/core/Edition.h"
 #include "../../src/core/Settings.h"
+#include "../../src/core/UiScale.h"
+#include "Displays.h"
 #include "Updater.h"
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <tlhelp32.h>
 #include <psapi.h>
+#include <shobjidl.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -31,9 +35,51 @@ const D2D1_COLOR_F kBody = D2D1::ColorF(0x1C1C21), kSide = D2D1::ColorF(0x17171B
                    kOnAccent = D2D1::ColorF(0x0B1A26);
 D2D1_COLOR_F White(float a) { return D2D1::ColorF(1.f, 1.f, 1.f, a); }
 
-enum Section { Personalize, Desktop, Apps, System, Updates, About, SectionCount };
-const wchar_t* const kSectionNames[] = {L"Personalizacja", L"Pulpit i okna", L"Aplikacje", L"System", L"Aktualizacje", L"Informacje"};
-const wchar_t kSectionGlyphs[] = {L'\xE771', L'\xE7F4', L'\xE71D', L'\xE770', L'\xE895', L'\xE946'};
+enum Section { Personalize, Desktop, Display, Apps, System, Updates, About, SectionCount };
+const wchar_t* const kSectionNames[] = {L"Personalizacja", L"Pulpit i okna", L"Ekran", L"Aplikacje", L"System", L"Aktualizacje", L"Informacje"};
+const wchar_t kSectionGlyphs[] = {L'\xE771', L'\xE7F4', L'\xE7F8', L'\xE71D', L'\xE770', L'\xE895', L'\xE946'};
+// Veyra Minimal ma tylko Ekran i Informacje (reszta dotyczy aplikacji Veyry, których w Minimal nie ma)
+std::vector<int> VisibleSections() {
+    if (Edition::Minimal()) return {Display, About};
+    return {Personalize, Desktop, Display, Apps, System, Updates, About};
+}
+
+// Skala Veyry: wartości ustawienia "uiScale" (0 = auto)
+constexpr int kScales[] = {0, 75, 90, 100, 110, 125, 150};
+
+std::wstring LowerCopy(std::wstring s) {
+    std::transform(s.begin(), s.end(), s.begin(), ::towlower);
+    return s;
+}
+
+// "Twoje tapety": do 3 — najpierw wybrane w Ustawieniach (najnowsze pierwsze), potem tapety Windows sprzed Veyry
+// (zapamiętana przy pierwszym starcie i historia tła Windows). Bez tapet Veyry.
+std::vector<std::wstring> UserWallpaperPaths() {
+    std::vector<std::wstring> out;
+    auto add = [&](const std::wstring& p) {
+        if (p.empty() || out.size() >= 3 || GetFileAttributesW(p.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+        if (LowerCopy(p.substr(p.find_last_of(L'\\') + 1)).rfind(L"veyra-", 0) == 0) return;
+        for (const auto& o : out)
+            if (_wcsicmp(o.c_str(), p.c_str()) == 0) return;
+        out.push_back(p);
+    };
+    const std::wstring custom = Settings::Get(L"customWallpapers");
+    for (size_t a = 0, b; a < custom.size(); a = b + 1) {
+        b = custom.find(L'|', a);
+        if (b == std::wstring::npos) b = custom.size();
+        add(custom.substr(a, b - a));
+    }
+    add(Settings::Get(L"previousWallpaper"));
+    for (int i = 0; i < 5; ++i) {
+        wchar_t value[MAX_PATH]{};
+        DWORD size = sizeof(value);
+        const std::wstring name = L"BackgroundHistoryPath" + std::to_wstring(i);
+        if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Wallpapers", name.c_str(),
+                         RRF_RT_REG_SZ, nullptr, value, &size) == ERROR_SUCCESS)
+            add(value);
+    }
+    return out;
+}
 
 struct WinLink {
     const wchar_t* label;
@@ -160,6 +206,7 @@ public:
         showTitle_ = false;
         if (!Create(inst, g, o)) return false;
         headerFormat_ = MakeFormat(L"Segoe UI", 24.f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        bigCenterFormat_ = MakeFormat(L"Segoe UI", 24.f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER);
         appFormat_ = MakeFormat(L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
         sideFormat_ = MakeFormat(L"Segoe UI", 13.f);
         titleFormat_ = MakeFormat(L"Segoe UI", 13.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
@@ -175,6 +222,8 @@ public:
         wallpaper_ = CurrentWallpaper();
         shellVeyra_ = ShellIsVeyra();
         calcVeyra_ = CalcIsVeyra();
+        monitors_ = Displays::List();
+        if (Edition::Minimal()) section_ = Display;
         StartThumbnails();
         if (wcsstr(GetCommandLineW(), L"--aktualizacje")) OpenUpdates();
         Redraw();
@@ -196,8 +245,11 @@ protected:
         Fill(dc, {0.f, 0.f, kSideW, H}, kSide);
         Fill(dc, {kSideW - 1.f, 0.f, kSideW, H}, White(0.06f));
         Text(dc, L"Ustawienia", appFormat_.Get(), {20.f, 44.f, kSideW - 10.f, 70.f}, White(0.95f));
-        for (int i = 0; i < SectionCount; ++i) {
-            const D2D1_RECT_F r{10.f, 82.f + i * 38.f, kSideW - 10.f, 82.f + i * 38.f + 34.f};
+        const std::vector<int> visible = VisibleSections();
+        for (size_t n = 0; n < visible.size(); ++n) {
+            const int i = visible[n];
+            const float top = 82.f + static_cast<float>(n) * 38.f;
+            const D2D1_RECT_F r{10.f, top, kSideW - 10.f, top + 34.f};
             if (i == section_) {
                 Fill(dc, r, White(0.10f), 8.f);
                 Fill(dc, {r.left, r.top + 9.f, r.left + 3.f, r.bottom - 9.f}, kAccent, 1.5f);
@@ -218,6 +270,7 @@ protected:
         switch (section_) {
         case Personalize: y = PaintPersonalize(dc, y); break;
         case Desktop: y = PaintDesktop(dc, y); break;
+        case Display: y = PaintDisplay(dc, y); break;
         case Apps: y = PaintApps(dc, y); break;
         case System: y = PaintSystem(dc, y); break;
         case Updates: y = PaintUpdates(dc, y); break;
@@ -247,30 +300,161 @@ protected:
                  wrapFormat_.Get(), {prev.right + 20.f, y + 50.f, R, y + 100.f}, White(0.45f));
             y += ph + 22.f;
 
+            const float gap = 12.f;
+            const int cols = std::max(2, static_cast<int>((R - L + gap) / (170.f + gap)));
+            const float tw = (R - L - (cols - 1) * gap) / cols, th = tw * 9.f / 16.f;
+            // Twoje tapety (do 3) + kafelek "Wybierz obraz…"
+            Label(dc, L"TWOJE TAPETY", L, y);
+            y += 24.f;
+            int n = 0;
+            for (size_t i = 0; i < thumbs_.size(); ++i) {
+                if (!thumbs_[i].user) continue;
+                const float x = L + (n % cols) * (tw + gap), ty = y + (n / cols) * (th + gap);
+                ThumbTile(dc, i, {x, ty, x + tw, ty + th});
+                ++n;
+            }
+            {
+                const float x = L + (n % cols) * (tw + gap), ty = y + (n / cols) * (th + gap);
+                const D2D1_RECT_F r{x, ty, x + tw, ty + th};
+                Fill(dc, r, White(hover_ == HitId(HitKind::PickWallpaper, 0) ? 0.10f : 0.06f), 10.f);
+                Text(dc, L"+", bigCenterFormat_.Get(), {r.left, r.top + th / 2 - 34.f, r.right, r.top + th / 2 + 4.f}, White(0.8f));
+                Text(dc, L"Wybierz obraz…", buttonFormat_.Get(), {r.left, r.top + th / 2 + 4.f, r.right, r.top + th / 2 + 26.f}, White(0.8f));
+                AddHit(r, HitKind::PickWallpaper, 0);
+                ++n;
+            }
+            y += ((n + cols - 1) / cols) * (th + gap) + 10.f;
             Label(dc, L"TAPETY VEYRY", L, y);
             y += 24.f;
             if (thumbs_.empty()) {
                 Text(dc, thumbsDone_ ? L"Nie znaleziono obrazów" : L"Wczytywanie…", descFormat_.Get(), {L, y, R, y + 20.f}, White(0.5f));
                 return y + 30.f;
             }
-            const float gap = 12.f;
-            const int cols = std::max(2, static_cast<int>((R - L + gap) / (170.f + gap)));
-            const float tw = (R - L - (cols - 1) * gap) / cols, th = tw * 9.f / 16.f;
+            n = 0;
             for (size_t i = 0; i < thumbs_.size(); ++i) {
-                const float x = L + (i % cols) * (tw + gap), ty = y + (i / cols) * (th + gap);
-                const D2D1_RECT_F r{x, ty, x + tw, ty + th};
-                Fill(dc, r, White(0.06f), 10.f);
-                DrawThumb(dc, thumbs_[i], r, 10.f);
-                const bool current = _wcsicmp(thumbs_[i].path.c_str(), wallpaper_.c_str()) == 0;
-                const bool hot = hover_ == HitId(HitKind::Wallpaper, static_cast<int>(i));
-                if (current || hot) {
-                    brush_->SetColor(current ? kAccent : White(0.5f));
-                    dc->DrawRoundedRectangle(D2D1::RoundedRect({r.left + 1.f, r.top + 1.f, r.right - 1.f, r.bottom - 1.f}, 10.f, 10.f), brush_.Get(),
-                                             current ? 2.5f : 1.5f);
-                }
-                AddHit(r, HitKind::Wallpaper, static_cast<int>(i));
+                if (thumbs_[i].user) continue;
+                const float x = L + (n % cols) * (tw + gap), ty = y + (n / cols) * (th + gap);
+                ++n;
+                ThumbTile(dc, i, {x, ty, x + tw, ty + th});
             }
-            y += ((thumbs_.size() + cols - 1) / cols) * (th + gap);
+            y += ((n + cols - 1) / cols) * (th + gap);
+        }
+        return y;
+    }
+
+    // Miniatura tapety z obramowaniem bieżącej / najechanej (mutex_ trzymany przez wołającego)
+    void ThumbTile(ID2D1DeviceContext* dc, size_t i, const D2D1_RECT_F& r) {
+        Fill(dc, r, White(0.06f), 10.f);
+        DrawThumb(dc, thumbs_[i], r, 10.f);
+        const bool current = _wcsicmp(thumbs_[i].path.c_str(), wallpaper_.c_str()) == 0;
+        const bool hot = hover_ == HitId(HitKind::Wallpaper, static_cast<int>(i));
+        if (current || hot) {
+            brush_->SetColor(current ? kAccent : White(0.5f));
+            dc->DrawRoundedRectangle(D2D1::RoundedRect({r.left + 1.f, r.top + 1.f, r.right - 1.f, r.bottom - 1.f}, 10.f, 10.f), brush_.Get(),
+                                     current ? 2.5f : 1.5f);
+        }
+        AddHit(r, HitKind::Wallpaper, static_cast<int>(i));
+    }
+
+    float PaintDisplay(ID2D1DeviceContext* dc, float y) {
+        const float L = kSideW + kPad, R = widthDip_ - kPad;
+        Label(dc, L"SKALA VEYRY", L, y);
+        y += 24.f;
+        const D2D1_RECT_F card = Card(dc, y, 2);
+        const int autoPercent = static_cast<int>(std::lround(UiScale::AutoFactor() * 100.f));
+        const int systemPercent = static_cast<int>(std::lround(GetDpiForSystem() * 100.0 / 96.0));
+        Text(dc, L"Wielkość pulpitu, docku, górnego paska i menu", titleFormat_.Get(),
+             {card.left + 18.f, card.top + 12.f, card.right - 18.f, card.top + 32.f}, White(0.95f));
+        Text(dc, L"Auto dopasowuje Veyrę do ekranu (teraz " + std::to_wstring(autoPercent) + L"%). Skalowanie Windows: " +
+                     std::to_wstring(systemPercent) + L"% — aplikacje skaluje Windows",
+             descFormat_.Get(), {card.left + 18.f, card.top + 32.f, card.right - 18.f, card.top + 52.f}, White(0.5f));
+        const std::wstring current = Settings::Get(L"uiScale", L"auto");
+        float bx = card.left + 18.f;
+        for (int i = 0; i < static_cast<int>(std::size(kScales)); ++i) {
+            const D2D1_RECT_F b{bx, card.top + kRowH + 12.f, bx + 66.f, card.top + kRowH + 44.f};
+            const bool on = kScales[i] ? _wtoi(current.c_str()) == kScales[i] : _wtoi(current.c_str()) == 0;
+            if (on) {
+                Fill(dc, b, kAccent, 8.f);
+                Text(dc, i ? std::to_wstring(kScales[i]) + L"%" : L"Auto", buttonFormat_.Get(), b, kOnAccent);
+            } else {
+                Button(dc, b, (i ? std::to_wstring(kScales[i]) + L"%" : std::wstring(L"Auto")).c_str(), HitId(HitKind::Scale, i));
+            }
+            AddHit(b, HitKind::Scale, i);
+            bx += 74.f;
+        }
+        y = card.bottom + 26.f;
+
+        Label(dc, (L"MONITORY (" + std::to_wstring(monitors_.size()) + L")").c_str(), L, y);
+        y += 24.f;
+        // Układ: przeciągnij monitor i puść — przyklei się do krawędzi sąsiedniego
+        const D2D1_RECT_F area{L, y, R, y + 230.f};
+        Fill(dc, area, White(0.04f), 12.f);
+        if (!monitors_.empty()) {
+            if (dragIndex_ < 0) {  // podczas przeciągania skala widoku stoi w miejscu
+                int minX = INT_MAX, minY = INT_MAX, maxX = INT_MIN, maxY = INT_MIN;
+                for (const auto& m : monitors_)
+                    minX = std::min(minX, m.x), minY = std::min(minY, m.y), maxX = std::max(maxX, m.x + m.width), maxY = std::max(maxY, m.y + m.height);
+                const float bw = static_cast<float>(maxX - minX), bh = static_cast<float>(maxY - minY);
+                viewK_ = std::min((area.right - area.left - 60.f) / bw, (area.bottom - area.top - 40.f) / bh);
+                viewX_ = (area.left + area.right) / 2 - (minX + bw / 2) * viewK_;
+                viewY_ = (area.top + area.bottom) / 2 - (minY + bh / 2) * viewK_;
+            }
+            for (size_t i = 0; i < monitors_.size(); ++i) {
+                const auto& m = monitors_[i];
+                const D2D1_RECT_F r{viewX_ + m.x * viewK_ + 2.f, viewY_ + m.y * viewK_ + 2.f, viewX_ + (m.x + m.width) * viewK_ - 2.f,
+                                    viewY_ + (m.y + m.height) * viewK_ - 2.f};
+                const bool hot = static_cast<int>(i) == dragIndex_ || hover_ == HitId(HitKind::Monitor, static_cast<int>(i));
+                Fill(dc, r, White(hot ? 0.16f : 0.10f), 8.f);
+                brush_->SetColor(m.primary ? kAccent : White(0.25f));
+                dc->DrawRoundedRectangle(D2D1::RoundedRect({r.left + 1.f, r.top + 1.f, r.right - 1.f, r.bottom - 1.f}, 8.f, 8.f), brush_.Get(),
+                                         m.primary ? 2.f : 1.f);
+                const float cy = (r.top + r.bottom) / 2;
+                Text(dc, std::to_wstring(i + 1), bigCenterFormat_.Get(), {r.left, cy - 30.f, r.right, cy + 4.f}, White(0.95f));
+                Text(dc, std::to_wstring(m.width) + L"×" + std::to_wstring(m.height), buttonFormat_.Get(), {r.left, cy + 6.f, r.right, cy + 24.f},
+                     White(0.6f));
+                AddHit(r, HitKind::Monitor, static_cast<int>(i));
+            }
+        }
+        y = area.bottom + 12.f;
+        Text(dc, monitors_.size() > 1 ? L"Przeciągnij monitor, aby ustawić go po lewej, prawej, nad albo pod innym, potem kliknij Zastosuj."
+                                      : L"Podłączony jest jeden monitor.",
+             descFormat_.Get(), {L, y, R, y + 20.f}, White(0.5f));
+        y += 28.f;
+        float bxx = L;
+        if (layoutChanged_) {
+            Button(dc, {bxx, y, bxx + 120.f, y + 34.f}, L"Zastosuj", HitId(HitKind::ApplyLayout, 0));
+            AddHit({bxx, y, bxx + 120.f, y + 34.f}, HitKind::ApplyLayout, 0);
+            bxx += 132.f;
+            Button(dc, {bxx, y, bxx + 120.f, y + 34.f}, L"Cofnij", HitId(HitKind::ResetLayout, 0));
+            AddHit({bxx, y, bxx + 120.f, y + 34.f}, HitKind::ResetLayout, 0);
+            bxx += 132.f;
+        }
+        if (Edition::Minimal()) {  // z Eksploratorem w tle działają też Ustawienia Windows
+            Button(dc, {bxx, y, bxx + 220.f, y + 34.f}, L"Ekran w Ustawieniach Windows", HitId(HitKind::WindowsDisplay, 0));
+            AddHit({bxx, y, bxx + 220.f, y + 34.f}, HitKind::WindowsDisplay, 0);
+            bxx += 232.f;
+        }
+        if (!displayStatus_.empty()) Text(dc, displayStatus_, descFormat_.Get(), {bxx + 8.f, y, R, y + 34.f}, White(0.6f));
+        if (layoutChanged_ || Edition::Minimal() || !displayStatus_.empty()) y += 50.f;
+        // Lista monitorów
+        if (!monitors_.empty()) {
+            const D2D1_RECT_F list = Card(dc, y, static_cast<int>(monitors_.size()));
+            for (size_t i = 0; i < monitors_.size(); ++i) {
+                const auto& m = monitors_[i];
+                const D2D1_RECT_F r{list.left, list.top + i * kRowH, list.right, list.top + (i + 1) * kRowH};
+                if (i) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
+                Text(dc, std::to_wstring(i + 1) + L".  " + m.name + (m.primary ? L"  (główny)" : L""), titleFormat_.Get(),
+                     {r.left + 18.f, r.top + 12.f, r.right - 18.f, r.top + 32.f}, White(0.95f));
+                std::wstring d = std::to_wstring(m.width) + L" × " + std::to_wstring(m.height);
+                if (m.hz > 1) d += L"  ·  " + std::to_wstring(m.hz) + L" Hz";
+                if (m.diagonalIn > 0) {
+                    wchar_t in[16];
+                    swprintf_s(in, L"%.1f″", m.diagonalIn);
+                    d += L"  ·  " + std::wstring(in);
+                }
+                d += L"  ·  skalowanie Windows " + std::to_wstring(m.scale) + L"%";
+                Text(dc, d, descFormat_.Get(), {r.left + 18.f, r.top + 32.f, r.right - 18.f, r.top + 52.f}, White(0.5f));
+            }
+            y = list.bottom + 20.f;
         }
         return y;
     }
@@ -355,6 +539,12 @@ protected:
 
     float PaintUpdates(ID2D1DeviceContext* dc, float y) {
         const float L = kSideW + kPad;
+        {  // automatyczne sprawdzanie (powłoka: minutę po starcie, potem co 6 h) → powiadomienie
+            const D2D1_RECT_F autoCard = Card(dc, y, 1);
+            Toggle(dc, autoCard, 0, L"Sprawdzaj aktualizacje automatycznie",
+                   L"Co 6 godzin; o nowej wersji powie powiadomienie w prawym górnym rogu", Settings::GetBool(L"autoUpdateCheck", true), 3);
+            y = autoCard.bottom + 22.f;
+        }
         Label(dc, L"WERSJA", L, y);
         y += 24.f;
         const D2D1_RECT_F card = Card(dc, y, 3);
@@ -525,6 +715,7 @@ protected:
     // ---------------- Miniatury tapet (wątek w tle) ----------------
     struct Thumb {
         std::wstring path;
+        bool user = false;  // "Twoje tapety"
         ComPtr<IWICBitmapSource> pending;
         ComPtr<ID2D1Bitmap> bitmap;
     };
@@ -546,7 +737,8 @@ protected:
 
     void StartThumbnails() {
         const HWND hwnd = hwnd_;
-        thumbThread_ = std::thread([this, hwnd] {
+        const std::vector<std::wstring> userFiles = UserWallpaperPaths();
+        thumbThread_ = std::thread([this, hwnd, userFiles] {
             CoInitializeEx(nullptr, COINIT_MULTITHREADED);
             std::vector<std::wstring> files;
             auto scan = [&](const std::wstring& dir, int depth, auto& self) -> void {
@@ -575,10 +767,14 @@ protected:
 
             ComPtr<IWICImagingFactory> wic;
             CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));
-            for (const std::wstring& f : files) {
+            const size_t userCount = userFiles.size();
+            files.insert(files.begin(), userFiles.begin(), userFiles.end());
+            for (size_t fi = 0; fi < files.size(); ++fi) {
+                const std::wstring& f = files[fi];
                 if (stop_ || !wic) break;
                 Thumb t;
                 t.path = f;
+                t.user = fi < userCount;
                 t.pending = MakeThumb(wic.Get(), f);
                 if (!t.pending) continue;
                 {
@@ -619,7 +815,8 @@ protected:
     }
 
     // ---------------- Interakcja ----------------
-    enum class HitKind { Section, Wallpaper, Toggle, FontMinus, FontPlus, OpenApp, WinLink, GitHub, CheckUpdate, DoUpdate };
+    enum class HitKind { Section, Wallpaper, Toggle, FontMinus, FontPlus, OpenApp, WinLink, GitHub, CheckUpdate, DoUpdate, PickWallpaper, Scale,
+                         Monitor, ApplyLayout, ResetLayout, WindowsDisplay };
     struct Hit {
         D2D1_RECT_F rect;
         int id;
@@ -633,6 +830,13 @@ protected:
     }
 
     void OnMouseMove(D2D1_POINT_2F p) override {
+        if (dragIndex_ >= 0 && viewK_ > 0.f) {  // przeciąganie monitora
+            auto& m = monitors_[static_cast<size_t>(dragIndex_)];
+            m.x = dragOrigX_ + static_cast<int>(std::lround((p.x - dragStart_.x) / viewK_));
+            m.y = dragOrigY_ + static_cast<int>(std::lround((p.y - dragStart_.y) / viewK_));
+            Redraw();
+            return;
+        }
         const int h = HitAt(p);
         if (h != hover_) {
             hover_ = h;
@@ -649,6 +853,16 @@ protected:
         scroll_ = std::clamp(scroll_ - delta / 120.f * 60.f, 0.f, std::max(0.f, contentH_ - heightDip_));
         Redraw();
     }
+    void OnMouseUp(D2D1_POINT_2F) override {
+        if (dragIndex_ < 0) return;
+        Displays::Snap(monitors_, static_cast<size_t>(dragIndex_));
+        dragIndex_ = -1;
+        ReleaseCapture();
+        layoutChanged_ = true;
+        displayStatus_.clear();
+        Redraw();
+    }
+
     void OnMouseDown(D2D1_POINT_2F p, bool right) override {
         if (right) return;
         const int h = HitAt(p);
@@ -694,6 +908,9 @@ protected:
             if (i == 0) {
                 Settings::SetBool(L"windowDots", !Settings::GetBool(L"windowDots", true));
                 Broadcast();
+            } else if (i == 3) {
+                Settings::SetBool(L"autoUpdateCheck", !Settings::GetBool(L"autoUpdateCheck", true));
+                Broadcast();
             } else if (i == 2) {
                 if (SetCalcVeyra(!calcVeyra_)) calcVeyra_ = CalcIsVeyra();
                 else SetTimer(hwnd_, kCalcTimer, 1500, nullptr);  // po zgodzie UAC sprawdzamy ponownie
@@ -725,6 +942,35 @@ protected:
         }
         case HitKind::WinLink:
             ShellExecuteW(nullptr, L"open", kWinLinks[i].uri, nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        case HitKind::PickWallpaper:
+            PickWallpaper();
+            break;
+        case HitKind::Scale:
+            Settings::Set(L"uiScale", kScales[i] ? std::to_wstring(kScales[i]) : std::wstring(L"auto"));
+            Broadcast();
+            break;
+        case HitKind::Monitor:
+            if (monitors_.size() > 1) {
+                dragIndex_ = i;
+                dragStart_ = p;
+                dragOrigX_ = monitors_[static_cast<size_t>(i)].x;
+                dragOrigY_ = monitors_[static_cast<size_t>(i)].y;
+                SetCapture(hwnd_);
+            }
+            break;
+        case HitKind::ApplyLayout:
+            displayStatus_ = Displays::ApplyLayout(monitors_) ? L"Zastosowano nowy układ." : L"Windows nie przyjął tego układu.";
+            monitors_ = Displays::List();
+            layoutChanged_ = false;
+            break;
+        case HitKind::ResetLayout:
+            monitors_ = Displays::List();
+            layoutChanged_ = false;
+            displayStatus_.clear();
+            break;
+        case HitKind::WindowsDisplay:
+            ShellExecuteW(nullptr, L"open", L"ms-settings:display", nullptr, nullptr, SW_SHOWNORMAL);
             break;
         case HitKind::GitHub:
             ShellExecuteW(nullptr, L"open", L"https://github.com/Promileczek/Veyra", nullptr, nullptr, SW_SHOWNORMAL);
@@ -767,6 +1013,11 @@ protected:
             result = 0;
             return true;
         }
+        if (msg == WM_DISPLAYCHANGE) {  // monitor podłączony / odłączony / nowa rozdzielczość
+            if (dragIndex_ < 0 && !layoutChanged_) monitors_ = Displays::List();
+            Redraw();
+            return false;
+        }
         if (msg == WM_THUMBS) {
             Redraw();
             result = 0;
@@ -781,15 +1032,55 @@ protected:
         return false;
     }
 
+    // Własna tapeta: systemowe okno wyboru, trafia na początek "Twoich tapet" (zostają 3 najnowsze)
+    void PickWallpaper() {
+        ComPtr<IFileOpenDialog> dialog;
+        ComPtr<IShellItem> item;
+        PWSTR chosen = nullptr;
+        const COMDLG_FILTERSPEC types[] = {{L"Obrazy", L"*.jpg;*.jpeg;*.png;*.bmp"}};
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return;
+        dialog->SetFileTypes(1, types);
+        dialog->SetTitle(L"Wybierz tapetę");
+        if (FAILED(dialog->Show(hwnd_)) || FAILED(dialog->GetResult(&item)) || FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &chosen))) return;
+        std::wstring path = chosen;
+        CoTaskMemFree(chosen);
+        std::wstring list = path;
+        for (const std::wstring& p : UserWallpaperPaths())
+            if (_wcsicmp(p.c_str(), path.c_str()) != 0) list += L"|" + p;
+        Settings::Set(L"customWallpapers", list);
+        if (SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, path.data(), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)) wallpaper_ = path;
+        // Miniatury "Twoich tapet" od nowa (lista wyżej już ma właściwą kolejność i limit)
+        ComPtr<IWICImagingFactory> wic;
+        CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));
+        std::vector<Thumb> fresh;
+        for (const std::wstring& p : UserWallpaperPaths()) {
+            Thumb t;
+            t.path = p;
+            t.user = true;
+            t.pending = wic ? MakeThumb(wic.Get(), p) : nullptr;
+            if (t.pending) fresh.push_back(std::move(t));
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::erase_if(thumbs_, [](const Thumb& t) { return t.user; });
+        thumbs_.insert(thumbs_.begin(), std::make_move_iterator(fresh.begin()), std::make_move_iterator(fresh.end()));
+    }
+
     // Powłoka i terminal przeładowują settings.txt
     static void Broadcast() { PostMessageW(HWND_BROADCAST, Settings::ChangedMessage(), 0, 0); }
 
-    ComPtr<IDWriteTextFormat> headerFormat_, appFormat_, sideFormat_, titleFormat_, descFormat_, buttonFormat_, glyphFormat_, sectionLabelFormat_,
+    ComPtr<IDWriteTextFormat> headerFormat_, bigCenterFormat_, appFormat_, sideFormat_, titleFormat_, descFormat_, buttonFormat_, glyphFormat_, sectionLabelFormat_,
         wrapFormat_;
     std::vector<Hit> hits_;
     int section_ = Personalize, hover_ = -1;
     float scroll_ = 0.f, contentH_ = 0.f;
     std::wstring wallpaper_, shellError_;
+    // Ekran
+    std::vector<Displays::Monitor> monitors_;
+    int dragIndex_ = -1, dragOrigX_ = 0, dragOrigY_ = 0;
+    D2D1_POINT_2F dragStart_{};
+    float viewK_ = 0.f, viewX_ = 0.f, viewY_ = 0.f;  // piksele monitorów → punkty widoku układu
+    bool layoutChanged_ = false;
+    std::wstring displayStatus_;
     bool shellVeyra_ = false, confirmShell_ = false, calcVeyra_ = false;
     int memoryMb_ = -1;
     // Aktualizacje

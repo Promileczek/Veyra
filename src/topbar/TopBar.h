@@ -20,6 +20,7 @@ private:
     bool CreateResources();
     void ReserveSpace();
     void Layout();
+    float TextWidth(const std::wstring& text, IDWriteTextFormat* format) const;
     void Render();
     void RequestRedraw();
     void UpdateCover(const MediaState& media);

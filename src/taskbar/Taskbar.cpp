@@ -1,6 +1,8 @@
 #include "Taskbar.h"
 #include "../core/Accent.h"
 #include "../core/Edition.h"
+#include "../core/Environment.h"
+#include "../core/UiScale.h"
 #include "../core/Settings.h"
 #include "../core/WorkArea.h"
 #include "../desktop/DesktopItems.h"
@@ -46,7 +48,7 @@ bool Taskbar::Create(HINSTANCE inst, Graphics& g) {
     hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
                             kClassName, L"Exploder Taskbar", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, inst, this);
     if (!hwnd_) return false;
-    dpi_ = GetDpiForWindow(hwnd_);
+    dpi_ = UiScale::Dpi(GetDpiForWindow(hwnd_));
 
     // Dock rysuje własne szkło (DrawGlass): akryl DWM ignoruje zaokrąglony region i zostawiał kwadratowe rogi
     if (!IsDock() && !(theme_.acrylic && SetBackdrop(hwnd_, Backdrop::Acrylic, theme_.acrylicTint)))
@@ -655,9 +657,14 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
     }
     if (msg == Settings::ChangedMessage()) {
         Settings::Reload();
+        if (UiScale::Reload()) {  // nowa skala Veyry: dock, górny pasek i pulpit układają się od nowa
+            for (const wchar_t* cls : {L"ExploderTaskbar", L"ExploderTopBar", L"ExploderDesktop"})
+                if (HWND h = FindWindowW(cls, nullptr)) PostMessageW(h, UiScale::ChangedMessage(), 0, 0);
+        }
         if (onSettingsChanged_) onSettingsChanged_();
         return 0;
     }
+    if (msg == UiScale::ChangedMessage()) msg = WM_DISPLAYCHANGE;  // nowa skala: jak zmiana ekranu
     if (msg == tracker_.ShellHookMessage() && msg != 0) {
         if (tracker_.HandleShellHook(wp, lp)) RequestRedraw();
         return 0;
@@ -681,12 +688,13 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         RequestRedraw();
         return 0;
     case WM_DPICHANGED:
-        dpi_ = HIWORD(wp);
+    case WM_DISPLAYCHANGE:  // też zmiana rozdzielczości: skala "auto" zależy od wielkości ekranu
+        UiScale::Reload();
+        dpi_ = UiScale::Dpi(msg == WM_DPICHANGED ? HIWORD(wp) : GetDpiForWindow(hwnd_));
         if (surface_.Context()) surface_.Context()->SetDpi(static_cast<float>(dpi_), static_cast<float>(dpi_));
         icons_.clear();
-        ReserveSpace();
-        return 0;
-    case WM_DISPLAYCHANGE:
+        glassStrip_.Reset();
+        glassBlur_.Reset();
         ReserveSpace();
         return 0;
     case WM_APPBAR:
@@ -762,6 +770,7 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_SETTINGCHANGE:
+        if (lp && lstrcmpiW(reinterpret_cast<const wchar_t*>(lp), L"Environment") == 0) Environment::ResetFromUser();  // zmienne zmienione w systemie
         if (wp == SPI_SETDESKWALLPAPER) {  // nowa tapeta → nowe szkło
             glassStrip_.Reset();
             glassBlur_.Reset();

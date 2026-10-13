@@ -1,4 +1,5 @@
 #include "AltTab.h"
+#include "../core/UiScale.h"
 #include "../core/Accent.h"
 #include "WindowTracker.h"
 #include <shellscalingapi.h>
@@ -142,7 +143,7 @@ void AltTab::ShowPanel() {
     GetMonitorInfoW(mon, &mi);
     UINT dpiX = 96, dpiY = 96;
     GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
-    dpi_ = dpiX;
+    dpi_ = UiScale::Dpi(dpiX);
     columns_ = std::min<int>(static_cast<int>(cards_.size()), kMaxColumns);
     const int rows = (static_cast<int>(cards_.size()) + columns_ - 1) / columns_;
     widthDip_ = 2 * kPad + columns_ * kCardW + (columns_ - 1) * kGap;

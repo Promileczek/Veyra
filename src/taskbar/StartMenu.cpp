@@ -28,7 +28,7 @@ constexpr Power kPowers[] = {{8, L'\xE72E', L"Zablokuj"}, {9, L'\xE708', L"Uśpi
 
 // Aplikacja Explodera obok exploder.exe; w Minimal jej systemowy odpowiednik
 void LaunchSibling(const wchar_t* exe, const wchar_t* system) {
-    if (Edition::Minimal()) {
+    if (Edition::Minimal() && system) {  // system == nullptr: aplikacja Veyry także w Minimal (Ustawienia → Ekran)
         ShellExecuteW(nullptr, L"open", system, nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
@@ -154,7 +154,7 @@ void StartMenu::Run(Action a) {
     case Action::Files:
         if (openFiles) openFiles();
         break;
-    case Action::Settings: LaunchSibling(L"exploder-settings.exe", L"ms-settings:"); break;
+    case Action::Settings: LaunchSibling(L"exploder-settings.exe", nullptr); break;
     case Action::TaskManager: ShellExecuteW(nullptr, L"open", L"taskmgr.exe", nullptr, nullptr, SW_SHOWNORMAL); break;
     case Action::Desktop:
         if (showDesktop) showDesktop();

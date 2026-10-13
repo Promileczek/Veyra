@@ -1,6 +1,7 @@
 #include "AppLauncher.h"
 #include "DesktopItems.h"
 #include "../core/Edition.h"
+#include "../core/UiScale.h"
 #include "../files/FileWindow.h"
 #include <knownfolders.h>
 #include <shellapi.h>
@@ -204,7 +205,7 @@ void AppLauncher::OpenPicker(HWND owner, const RECT& anchor) {
         a.pinned = IsPinned(e.key);
         apps.push_back(std::move(a));
     }
-    picker_.Open(anchor, GetDpiForWindow(owner), std::move(apps));
+    picker_.Open(anchor, UiScale::Dpi(GetDpiForWindow(owner)), std::move(apps));
 }
 
 void AppLauncher::RebuildView() {
@@ -468,7 +469,7 @@ void AppLauncher::OnClick(D2D1_POINT_2F p, HWND owner) {
     } else {  // kafelek "Dodaj": okienko pod kafelkiem
         const int first = scrollRow_ * Columns();
         const D2D1_RECT_F c = CellRect(hit - first);
-        const float k = GetDpiForWindow(owner) / 96.f;
+        const float k = UiScale::Dpi(GetDpiForWindow(owner)) / 96.f;
         POINT a{static_cast<LONG>(c.left * k), static_cast<LONG>(c.top * k)}, b{static_cast<LONG>(c.right * k), static_cast<LONG>(c.bottom * k)};
         ClientToScreen(owner, &a);
         ClientToScreen(owner, &b);

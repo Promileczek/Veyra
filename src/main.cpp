@@ -3,12 +3,15 @@
 #include <dbghelp.h>
 #include <string>
 #include "core/Edition.h"
+#include "core/Environment.h"
 #include "core/Graphics.h"
 #include "core/Settings.h"
 #include "desktop/Desktop.h"
 #include "files/FileWindow.h"
 #include "shell/AltTab.h"
 #include "shell/ExplorerUi.h"
+#include "shell/Notification.h"
+#include "core/UiScale.h"
 #include "shell/WindowDots.h"
 #include "taskbar/Taskbar.h"
 #include "topbar/TopBar.h"
@@ -32,6 +35,7 @@ static LONG WINAPI WriteCrashDump(EXCEPTION_POINTERS* info) {
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     SetUnhandledExceptionFilter(WriteCrashDump);
+    Environment::ResetFromUser();  // nie przekazujemy programom zmiennych tego, kto nas uruchomił
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\ExploderShell");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;  // już działa
 
@@ -42,6 +46,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
         std::wstring wallpaper = exe;
         wallpaper = wallpaper.substr(0, wallpaper.find_last_of(L'\\') + 1) + L"wallpapers\\veyra-domyslna.jpg";
+        wchar_t previous[MAX_PATH]{};  // tapeta sprzed Veyry → Ustawienia → Twoje tapety
+        if (SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, previous, 0) && *previous && !wcsstr(previous, L"veyra-"))
+            Settings::Set(L"previousWallpaper", previous);
         if (GetFileAttributesW(wallpaper.c_str()) != INVALID_FILE_ATTRIBUTES &&
             SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, wallpaper.data(), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE))
             Settings::SetBool(L"defaultWallpaperApplied", true);
@@ -62,6 +69,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         TopBar topBar;
         AltTab altTab;
         WindowDots windowDots;
+        UpdateWatcher updates;
         if (!graphics.Init()) {
             MessageBoxW(nullptr, L"Nie udało się zainicjować grafiki (Direct3D/Direct2D).", L"Exploder", MB_ICONERROR);
         } else {
@@ -89,6 +97,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             if (!taskbar.Create(inst, graphics)) {
                 MessageBoxW(nullptr, L"Nie udało się utworzyć paska zadań.", L"Exploder", MB_ICONERROR);
             } else {
+                updates.Start(inst, graphics, [] { return UiScale::Dpi(GetDpiForSystem()); });  // powiadomienie o nowej wersji
                 MSG msg;
                 while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
                     TranslateMessage(&msg);
@@ -97,6 +106,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                 code = 0;
             }
         }
+        updates.Stop();
         windowDots.Uninstall();
         altTab.Uninstall();
         CloseAllFileWindows();

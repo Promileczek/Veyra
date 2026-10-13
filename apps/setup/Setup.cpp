@@ -46,7 +46,7 @@ constexpr Payload kPayload[] = {
     {L"I_TERMINAL", L"exploder-terminal.exe", true},
     {L"I_CALC", L"exploder-calc.exe", true},
     {L"I_STORE", L"exploder-store.exe", true},
-    {L"I_SETTINGS", L"exploder-settings.exe", true},
+    {L"I_SETTINGS", L"exploder-settings.exe", false},  // w Minimal: zakładka Ekran
     {L"I_WP_DOMYSLNA", L"wallpapers\\veyra-domyslna.jpg", false},
     {L"I_WP_JEZIORO", L"wallpapers\\veyra-jezioro.jpg", false},
     {L"I_WP_GORY", L"wallpapers\\veyra-gory.jpg", false},
