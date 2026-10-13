@@ -2,6 +2,7 @@
 #include <objbase.h>
 #include <dbghelp.h>
 #include <string>
+#include "core/Edition.h"
 #include "core/Graphics.h"
 #include "core/Settings.h"
 #include "desktop/Desktop.h"
@@ -56,7 +57,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         if (!graphics.Init()) {
             MessageBoxW(nullptr, L"Nie udało się zainicjować grafiki (Direct3D/Direct2D).", L"Exploder", MB_ICONERROR);
         } else {
-            auto openFolder = [inst, &graphics](ComPtr<IShellItem> folder) { OpenFileWindow(inst, graphics, std::move(folder)); };
+            auto openFolder = [inst, &graphics](ComPtr<IShellItem> folder) {
+                if (Edition::Minimal()) Edition::OpenInExplorer(folder.Get());  // Minimal: bez okien "Pliki"
+                else OpenFileWindow(inst, graphics, std::move(folder));
+            };
             if (shellMode && !desktop.Create(inst, graphics, openFolder)) desktop.Destroy();  // pulpit nieobowiązkowy
             topBar.Create(inst, graphics);  // nieobowiązkowy, jak pulpit
             taskbar.SetBeforeExplorer([&desktop, &topBar, &altTab, &windowDots] {
@@ -68,9 +72,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             });
             if (shellMode) altTab.Install(inst, graphics);  // bez explorera systemowy Alt+Tab jest w stylu Win95
             taskbar.SetOnSettingsChanged([&windowDots] {
+                if (Edition::Minimal()) return;  // Minimal: bez kropek
                 if (windowDots.Enabled() != Settings::GetBool(L"windowDots", true)) windowDots.SetEnabled(!windowDots.Enabled());
             });
-            if (shellMode && windowDots.Install(inst, graphics))
+            if (shellMode && !Edition::Minimal() && windowDots.Install(inst, graphics))
                 taskbar.SetWindowDotsToggle([&windowDots] { return windowDots.Enabled(); },
                                             [&windowDots](bool on) { windowDots.SetEnabled(on); });
             if (!taskbar.Create(inst, graphics)) {

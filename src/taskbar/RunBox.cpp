@@ -1,4 +1,5 @@
 #include "RunBox.h"
+#include "../core/Edition.h"
 #include "../core/Settings.h"
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -148,11 +149,14 @@ bool RunBox::Run() {
     const std::wstring low = Lower(cmd);
     bool ok = false;
     // Same nazwy (bez argumentów) → aplikacje Veyry; "cmd /c …" itp. zostaje prawdziwym cmd.exe
-    if (low == L"cmd" || low == L"cmd.exe" || low == L"terminal") {
+    if (Edition::Minimal()) {
+        // Minimal: bez aplikacji Veyry — wszystko przez system
+    } else if (low == L"cmd" || low == L"cmd.exe" || low == L"terminal") {
         ok = LaunchSibling(L"exploder-terminal.exe");
     } else if (low == L"calc" || low == L"calc.exe" || low == L"kalkulator") {
         ok = LaunchSibling(L"exploder-calc.exe");
-    } else {
+    }
+    if (!ok) {
         // Jak w Windows: najpierw całość (ścieżka ze spacjami, adres, shell:…), potem program + argumenty
         SHELLEXECUTEINFOW sei{sizeof(sei)};
         sei.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;

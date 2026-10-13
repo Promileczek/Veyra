@@ -80,9 +80,17 @@ def settings():
     return img
 
 
+def setup():
+    img = base((0x2A, 0x2A, 0x31), (0x18, 0x18, 0x1D))  # grafit Veyry
+    d = ImageDraw.Draw(img)
+    d.line([(150, 150), (S // 2, 330), (S - 150, 150)], fill=(0x61, 0xB3, 0xFF), width=52, joint="curve")  # "V"
+    d.rounded_rectangle([150, 384, S - 150, 412], radius=14, fill=(0xEE, 0xEE, 0xEC))  # podstawa: instalacja
+    return img
+
+
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
-    for name, fn in (("terminal", terminal), ("calculator", calculator), ("store", store), ("settings", settings)):
+    for name, fn in (("terminal", terminal), ("calculator", calculator), ("store", store), ("settings", settings), ("setup", setup)):
         fn().save(OUT / f"{name}.ico", sizes=SIZES)
         fn().resize((128, 128), Image.LANCZOS).save(OUT / f"{name}.png")
         print("ok", name)

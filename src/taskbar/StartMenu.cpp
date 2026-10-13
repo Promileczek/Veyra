@@ -1,4 +1,5 @@
 #include "StartMenu.h"
+#include "../core/Edition.h"
 #include <powrprof.h>
 #include <shellapi.h>
 #include <string>
@@ -25,8 +26,12 @@ struct Power {
 constexpr Power kPowers[] = {{8, L'\xE72E', L"Zablokuj"}, {9, L'\xE708', L"Uśpij"}, {10, L'\xE777', L"Restart"},
                              {11, L'\xE7E8', L"Wyłącz"}, {12, L'\xF3B1', L"Wyloguj"}};
 
-// Aplikacja Explodera obok exploder.exe
-void LaunchSibling(const wchar_t* exe) {
+// Aplikacja Explodera obok exploder.exe; w Minimal jej systemowy odpowiednik
+void LaunchSibling(const wchar_t* exe, const wchar_t* system) {
+    if (Edition::Minimal()) {
+        ShellExecuteW(nullptr, L"open", system, nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::wstring p = path;
@@ -107,7 +112,10 @@ void StartMenu::Paint(ID2D1DeviceContext* dc) {
         }
         if (hover_ == i) Fill(dc, r, kHover, 8.f);
         Glyph(dc, kRows[i].glyph, {r.left + 6.f, r.top, r.left + 38.f, r.bottom}, kText);
-        Text(dc, kRows[i].label, textFormat_.Get(), {r.left + 44.f, r.top + 9.f, r.right - 8.f, r.bottom}, kText);
+        const wchar_t* label = kRows[i].label;
+        if (Edition::Minimal() && kRows[i].action == 0) label = L"Wiersz polecenia";
+        else if (Edition::Minimal() && kRows[i].action == 2) label = L"Microsoft Store";
+        Text(dc, label, textFormat_.Get(), {r.left + 44.f, r.top + 9.f, r.right - 8.f, r.bottom}, kText);
     }
     const D2D1_RECT_F first = PowerRect(0);
     Fill(dc, {kPad + 8.f, first.top - kSep / 2, kW - kPad - 8.f, first.top - kSep / 2 + 1.f}, D2D1::ColorF(1.f, 1.f, 1.f, 0.10f));
@@ -140,13 +148,13 @@ void StartMenu::OnMouseDown(D2D1_POINT_2F p) {
 
 void StartMenu::Run(Action a) {
     switch (a) {
-    case Action::Terminal: LaunchSibling(L"exploder-terminal.exe"); break;
-    case Action::Calculator: LaunchSibling(L"exploder-calc.exe"); break;
-    case Action::Store: LaunchSibling(L"exploder-store.exe"); break;
+    case Action::Terminal: LaunchSibling(L"exploder-terminal.exe", L"cmd.exe"); break;
+    case Action::Calculator: LaunchSibling(L"exploder-calc.exe", L"calc.exe"); break;
+    case Action::Store: LaunchSibling(L"exploder-store.exe", L"ms-windows-store:"); break;
     case Action::Files:
         if (openFiles) openFiles();
         break;
-    case Action::Settings: LaunchSibling(L"exploder-settings.exe"); break;
+    case Action::Settings: LaunchSibling(L"exploder-settings.exe", L"ms-settings:"); break;
     case Action::TaskManager: ShellExecuteW(nullptr, L"open", L"taskmgr.exe", nullptr, nullptr, SW_SHOWNORMAL); break;
     case Action::Desktop:
         if (showDesktop) showDesktop();

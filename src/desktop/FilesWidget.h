@@ -21,6 +21,7 @@ public:
 
     bool Visible() const { return visible_; }
     void Show();
+    void Disable() { disabled_ = true; visible_ = false; }  // Veyra Minimal: panelu nie ma
     D2D1_RECT_F Bounds() const;  // pusty prostokąt, gdy zamknięty
     bool Dragging() const { return drag_ != Drag::None; }
     bool Focused() const { return focused_; }
@@ -59,6 +60,7 @@ private:
     D2D1_RECT_F rect_{};  // pełny rozmiar (także gdy zwinięty)
     bool hasSaved_ = false;
     bool visible_ = true;
+    bool disabled_ = false;
     bool collapsed_ = false;
     bool focused_ = false;
     bool hoverLights_ = false;

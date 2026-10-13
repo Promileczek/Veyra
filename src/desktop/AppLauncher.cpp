@@ -1,5 +1,6 @@
 #include "AppLauncher.h"
 #include "DesktopItems.h"
+#include "../core/Edition.h"
 #include "../files/FileWindow.h"
 #include <knownfolders.h>
 #include <shellapi.h>
@@ -118,8 +119,8 @@ void AppLauncher::LoadAllApps() {
     ComPtr<IShellItem> child;
     while (items->Next(1, &child, nullptr) == S_OK) {
         Entry e;
-        // Wiersz polecenia i Kalkulator Windows zastępują aplikacje Veyry (niżej)
-        const bool replaced = MakeEntry(child, e) && ((e.key.size() >= 8 && _wcsicmp(e.key.c_str() + e.key.size() - 8, L"\\cmd.exe") == 0) ||
+        // Wiersz polecenia i Kalkulator Windows zastępują aplikacje Veyry (niżej; w Minimal ich nie ma)
+        const bool replaced = MakeEntry(child, e) && !Edition::Minimal() && ((e.key.size() >= 8 && _wcsicmp(e.key.c_str() + e.key.size() - 8, L"\\cmd.exe") == 0) ||
                                                       e.key.rfind(L"Microsoft.WindowsCalculator_", 0) == 0);
         if (!e.key.empty() && !replaced) allApps_.push_back(std::move(e));
         child.Reset();
@@ -138,6 +139,7 @@ void AppLauncher::LoadAllApps() {
                  {L"exploder-store.exe", L"Sklep", L"store winget programy instaluj"},
                  {L"exploder-settings.exe", L"Ustawienia", L"settings tapeta opcje"}};
     for (const auto& app : veyra) {
+        if (Edition::Minimal()) break;
         ComPtr<IShellItem> item;
         Entry e;
         if (FAILED(SHCreateItemFromParsingName((dir + app.file).c_str(), nullptr, IID_PPV_ARGS(&item))) || !MakeEntry(item, e)) continue;
@@ -175,6 +177,14 @@ void AppLauncher::OpenPicker(HWND owner, const RECT& anchor) {
         pickerCreated_ = picker_.Create(GetModuleHandleW(nullptr), *g_, L"ExploderAppPicker");
         picker_.onPick = [this](ComPtr<IShellItem> item) { Pin(std::move(item)); };
         picker_.onBrowse = [this] {
+            if (Edition::Minimal()) {  // bez okien "Pliki" — systemowe okno wyboru pliku
+                ComPtr<IFileOpenDialog> dialog;
+                ComPtr<IShellItem> item;
+                if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))) &&
+                    SUCCEEDED(dialog->Show(nullptr)) && SUCCEEDED(dialog->GetResult(&item)))
+                    Pin(std::move(item));
+                return;
+            }
             ComPtr<IShellItem> start;
             SHGetKnownFolderItem(FOLDERID_ComputerFolder, KF_FLAG_DEFAULT, nullptr, IID_PPV_ARGS(&start));
             OpenFilePicker(GetModuleHandleW(nullptr), *g_, start, L"Kliknij dwukrotnie plik lub program, aby dodać go do panelu",

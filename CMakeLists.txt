@@ -75,3 +75,34 @@ foreach(app terminal calc store settings)
     target_link_libraries(exploder-${app} PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi user32 ole32 shell32 dxguid advapi32 shlwapi winhttp)
     target_link_options(exploder-${app} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
 endforeach()
+
+# Instalator VeyraSetup.exe: programy i tapety w środku (RCDATA), wersje Minimal / Full, deinstalacja (/odinstaluj)
+set(SETUP_PAYLOAD ${CMAKE_BINARY_DIR}/setup_payload.rc)
+set(SETUP_FILES
+    I_EXPLODER ${CMAKE_BINARY_DIR}/exploder.exe
+    I_TERMINAL ${CMAKE_BINARY_DIR}/exploder-terminal.exe
+    I_CALC ${CMAKE_BINARY_DIR}/exploder-calc.exe
+    I_STORE ${CMAKE_BINARY_DIR}/exploder-store.exe
+    I_SETTINGS ${CMAKE_BINARY_DIR}/exploder-settings.exe
+    I_WP_DOMYSLNA ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-domyslna.jpg
+    I_WP_JEZIORO ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-jezioro.jpg
+    I_WP_GORY ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-gory.jpg
+    I_WP_ZORZA ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-zorza.jpg)
+set(SETUP_RC "")
+set(SETUP_DEPENDS "")
+list(LENGTH SETUP_FILES n)
+math(EXPR last "${n} - 1")
+foreach(i RANGE 0 ${last} 2)
+    math(EXPR j "${i} + 1")
+    list(GET SETUP_FILES ${i} res)
+    list(GET SETUP_FILES ${j} file)
+    string(APPEND SETUP_RC "${res} RCDATA \"${file}\"\n")
+    list(APPEND SETUP_DEPENDS ${file})
+endforeach()
+file(GENERATE OUTPUT ${SETUP_PAYLOAD} CONTENT "${SETUP_RC}")
+set_source_files_properties(${SETUP_PAYLOAD} PROPERTIES GENERATED TRUE OBJECT_DEPENDS "${SETUP_DEPENDS}")
+add_executable(veyra-setup WIN32 apps/setup/Setup.cpp apps/setup/setup.rc ${SETUP_PAYLOAD} ${EXPLODER_APP_CORE})
+set_target_properties(veyra-setup PROPERTIES OUTPUT_NAME VeyraSetup)
+add_dependencies(veyra-setup exploder exploder-terminal exploder-calc exploder-store exploder-settings)
+target_compile_options(veyra-setup PRIVATE /W4 /utf-8 /permissive-)
+target_link_libraries(veyra-setup PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi user32 ole32 shell32 dxguid advapi32 shlwapi winhttp)

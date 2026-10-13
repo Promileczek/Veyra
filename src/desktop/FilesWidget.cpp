@@ -94,7 +94,7 @@ D2D1_RECT_F FilesWidget::Bounds() const {
 }
 
 void FilesWidget::Show() {
-    if (visible_ && !collapsed_) return;
+    if (disabled_ || (visible_ && !collapsed_)) return;
     visible_ = true;
     collapsed_ = false;
     Save();

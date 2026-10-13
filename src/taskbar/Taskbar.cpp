@@ -1,5 +1,6 @@
 #include "Taskbar.h"
 #include "../core/Accent.h"
+#include "../core/Edition.h"
 #include "../core/Settings.h"
 #include "../core/WorkArea.h"
 #include "../desktop/DesktopItems.h"
@@ -67,7 +68,8 @@ bool Taskbar::Create(HINSTANCE inst, Graphics& g) {
     startMenu_.openFiles = [this] {
         ComPtr<IShellItem> pc;
         SHGetKnownFolderItem(FOLDERID_ComputerFolder, KF_FLAG_DEFAULT, nullptr, IID_PPV_ARGS(&pc));
-        OpenFileWindow(inst_, *g_, pc);
+        if (Edition::Minimal()) Edition::OpenInExplorer(pc.Get());
+        else OpenFileWindow(inst_, *g_, pc);
     };
     if (tray_.Active()) {
         HideMinimizedWindows(true);
@@ -760,6 +762,7 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             GetModuleFileNameW(nullptr, exe, MAX_PATH);
             std::wstring path = exe;
             path = path.substr(0, path.find_last_of(L'\\') + 1) + L"exploder-calc.exe";
+            if (Edition::Minimal()) path = L"calc.exe";
             ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         } else {
             ToggleStartMenu();

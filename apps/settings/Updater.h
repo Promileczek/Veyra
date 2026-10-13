@@ -200,8 +200,13 @@ inline bool BuildToolsAvailable() {
 }
 
 // Skrypt aktualizacji (zapisywany z BOM — PowerShell 5 czyta wtedy polskie znaki poprawnie)
-constexpr char kScript[] = R"PS(param([string]$Dest, [string]$ZipUrl, [string]$Version, [switch]$Binary)
+constexpr char kScript[] = R"PS(param([string]$Dest, [string]$ZipUrl, [string]$Version, [switch]$Binary, [switch]$Elevated)
 $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
+# Skrypt jako administrator (instalacja w Program Files) → Veyrę i Ustawienia uruchamiamy z uprawnieniami zwykłego użytkownika
+function Run($exe, $arg) {
+  if ($Elevated) { Start-Process runas.exe -ArgumentList ('/trustlevel:0x20000 "\"' + $exe + '\" ' + $arg + '"') -WindowStyle Hidden }
+  elseif ($arg) { Start-Process $exe -ArgumentList $arg } else { Start-Process $exe }
+}
 $root = Join-Path $env:LOCALAPPDATA 'Exploder\update'
 $status = Join-Path $root 'status.txt'; $log = Join-Path $root 'update.log'
 function S($t) { Set-Content -Path $status -Value $t -Encoding UTF8; Add-Content -Path $log -Value ((Get-Date -Format 'HH:mm:ss') + ' ' + $t) -Encoding UTF8 }
@@ -245,10 +250,10 @@ try {
   New-Item -ItemType Directory -Force (Join-Path $Dest 'wallpapers') | Out-Null
   if (Test-Path (Join-Path $bld 'wallpapers')) { Copy-Item (Join-Path $bld 'wallpapers\*') (Join-Path $Dest 'wallpapers') -Force }
   if (-not $hadExplorer) { Start-Sleep 2; Get-Process explorer -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1 }
-  if ($hadShell) { Start-Process (Join-Path $Dest 'exploder.exe') }
+  if ($hadShell) { Run (Join-Path $Dest 'exploder.exe') '' }
   S ('OK ' + $Version)
   Start-Sleep 2
-  Start-Process (Join-Path $Dest 'exploder-settings.exe') -ArgumentList '--aktualizacje'
+  Run (Join-Path $Dest 'exploder-settings.exe') '--aktualizacje'
 } catch {
   S ('BŁĄD ' + $_.Exception.Message)
 }
@@ -270,10 +275,15 @@ inline bool Start(const std::wstring& exeDir, const std::wstring& version, const
     }
     std::wstring dest = exeDir;
     if (!dest.empty() && dest.back() == L'\\') dest.pop_back();
+    // Folder bez prawa zapisu (instalacja w Program Files) → skrypt jako administrator (prośba UAC)
+    const HANDLE probe = CreateFileW((dest + L"\\.veyra-zapis").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                     FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    const bool elevate = probe == INVALID_HANDLE_VALUE;
+    if (!elevate) CloseHandle(probe);
     const std::wstring args = L"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + L"\" -Dest \"" + dest +
                               L"\" -ZipUrl \"" + (binaryZip.empty() ? ZipUrl() : binaryZip) + L"\" -Version \"" + version + L"\"" +
-                              (binaryZip.empty() ? L"" : L" -Binary");
-    return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", L"powershell.exe", args.c_str(), nullptr, SW_HIDE)) > 32;
+                              (binaryZip.empty() ? L"" : L" -Binary") + (elevate ? L" -Elevated" : L"");
+    return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, elevate ? L"runas" : L"open", L"powershell.exe", args.c_str(), nullptr, SW_HIDE)) > 32;
 }
 
 // Bieżący stan skryptu (pusty = brak)
