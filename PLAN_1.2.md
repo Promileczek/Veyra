@@ -11,6 +11,7 @@ Stan wyjściowy: **1.1.5.2** (13.10.2026).
   - albo przed UAC własne okienko Veyry z wyjaśnieniem („Veyra potrzebuje zgody, żeby podmienić pliki”).
 - [ ] **Spotify nie ma kropek macOS** (i inne aplikacje Electron, np. VS Code) — dziś kropki są tylko w zwykłych oknach, Brave/Chrome/Edge i Discordzie.
 - [ ] **Okienko „Uruchom” (Win+R)** nie da się przesunąć, zminimalizować ani zamknąć jak zwykłego okna.
+- [ ] **Czasem aplikacje się bugują i nie widać kropek macOS** (kropki znikają z okna, które powinno je mieć).
 - [ ] Puste czarne okienka z samymi kropkami macOS w rogach ekranu (nakładki WindowDots dla niewidocznych okien).
 - [ ] Statystyki „Dziś w aplikacjach” pokazują „Application Frame Host” zamiast nazwy aplikacji ze Sklepu (użyć AUMID jak w docku).
 - [ ] Kropki macOS: kolor tła nie zawsze trafia (nieaktywne okna, Discord po przełączeniu).
