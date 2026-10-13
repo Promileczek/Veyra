@@ -4,8 +4,8 @@
 1 ICON "../../res/store.ico"
 #include "store_icons.rc"  // ikonki programów (generuje tools/fetch_store_icons.py)
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,0,0,0
-PRODUCTVERSION 1,0,0,0
+FILEVERSION 1,1,0,0
+PRODUCTVERSION 1,1,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -15,7 +15,7 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Sklep"
             VALUE "ProductName", "Exploder"
-            VALUE "FileVersion", "1.0"
+            VALUE "FileVersion", "1.1"
             VALUE "OriginalFilename", "exploder-store.exe"
         END
     END
