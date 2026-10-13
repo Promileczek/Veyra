@@ -1,5 +1,8 @@
 #include "AppIcons.h"
 #include "../shell/TrayService.h"
+#include <propsys.h>
+#include <shellapi.h>
+#include <shlobj.h>
 #include <shobjidl.h>
 #include <algorithm>
 #include <cwctype>
@@ -17,6 +20,41 @@ std::wstring ProcessPath(HWND h) {
     const BOOL ok = QueryFullProcessImageNameW(proc, 0, path, &len);
     CloseHandle(proc);
     return ok ? std::wstring(path, len) : std::wstring();
+}
+
+// Aplikacje UWP (Kalkulator, Ustawienia…) mają okno w procesie ApplicationFrameHost — ikonę i nazwę bierzemy z ich
+// identyfikatora (AppUserModelID okna) przez folder Aplikacje
+ComPtr<IShellItem> UwpItem(HWND h) {
+    static const PROPERTYKEY kAumid = {{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
+    ComPtr<IPropertyStore> store;
+    ComPtr<IShellItem> item;
+    PROPVARIANT v;
+    PropVariantInit(&v);
+    if (SUCCEEDED(SHGetPropertyStoreForWindow(h, IID_PPV_ARGS(&store))) && SUCCEEDED(store->GetValue(kAumid, &v)) &&
+        v.vt == VT_LPWSTR && v.pwszVal && *v.pwszVal)
+        SHCreateItemFromParsingName((std::wstring(L"shell:AppsFolder\\") + v.pwszVal).c_str(), nullptr, IID_PPV_ARGS(&item));
+    PropVariantClear(&v);
+    return item;
+}
+
+std::wstring UwpName(HWND h) {
+    std::wstring name;
+    PWSTR display = nullptr;
+    if (ComPtr<IShellItem> item = UwpItem(h); item && SUCCEEDED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &display))) name = display;
+    CoTaskMemFree(display);
+    return name;
+}
+
+ComPtr<IWICBitmapSource> LoadUwpIcon(IWICImagingFactory* wic, HWND h, int px) {
+    ComPtr<IShellItemImageFactory> factory;
+    HBITMAP hbm = nullptr;
+    const ComPtr<IShellItem> item = UwpItem(h);
+    if (!item || FAILED(item.As(&factory)) || FAILED(factory->GetImage({px, px}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &hbm)))
+        return nullptr;
+    ComPtr<IWICBitmap> bmp;
+    const HRESULT hr = wic->CreateBitmapFromHBITMAP(hbm, nullptr, WICBitmapUsePremultipliedAlpha, &bmp);
+    DeleteObject(hbm);
+    return SUCCEEDED(hr) ? bmp : nullptr;
 }
 
 // "C:\...\Brave.exe" -> "brave"
@@ -127,6 +165,7 @@ std::wstring AppNameForWindow(HWND hwnd) {
     for (const auto& [p, name] : cache)
         if (p == path) return name;
     const std::wstring app = AppName(path);
+    if (app == L"applicationframehost") return UwpName(hwnd);  // różne aplikacje w jednym procesie — bez pamięci
     std::wstring name = app == L"cmd" || app == L"conhost" ? L"Wiersz polecenia" : FileDescription(path);
     if (name.empty()) name = app;
     if (cache.size() > 200) cache.clear();
@@ -159,6 +198,7 @@ AppIcon ResolveAppIcon(HWND hwnd, int sizePx, IWICImagingFactory* wic, ID2D1Devi
     const std::wstring app = path.empty() ? std::wstring() : AppName(path);
     if (app == L"cmd" || app == L"conhost") icon.appName = L"Wiersz polecenia";
     else if (app == L"powershell" || app == L"pwsh") icon.appName = L"PowerShell";
+    else if (app == L"applicationframehost") icon.appName = UwpName(hwnd);
     else if (!path.empty()) icon.appName = FileDescription(path);
     if (icon.appName.empty()) icon.appName = app;
 
@@ -166,7 +206,7 @@ AppIcon ResolveAppIcon(HWND hwnd, int sizePx, IWICImagingFactory* wic, ID2D1Devi
     if (!source) {
         icon.builtin = BuiltinFor(hwnd, app);
         if (icon.builtin != BuiltinIcon::None) return icon;
-        source = LoadExeIcon(wic, path, sizePx);
+        source = app == L"applicationframehost" ? LoadUwpIcon(wic, hwnd, sizePx) : LoadExeIcon(wic, path, sizePx);
     }
     if (!source) source = LoadWindowIcon(wic, hwnd);
 
