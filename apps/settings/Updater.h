@@ -210,6 +210,8 @@ function Run($exe, $arg) {
 $root = Join-Path $env:LOCALAPPDATA 'Exploder\update'
 $status = Join-Path $root 'status.txt'; $log = Join-Path $root 'update.log'
 function S($t) { Set-Content -Path $status -Value $t -Encoding UTF8; Add-Content -Path $log -Value ((Get-Date -Format 'HH:mm:ss') + ' ' + $t) -Encoding UTF8 }
+$hadExplorer = [bool](Get-Process explorer -ErrorAction SilentlyContinue)
+$hadShell = [bool](Get-Process exploder -ErrorAction SilentlyContinue)
 try {
   if ($Binary) { S 'Pobieranie nowej wersji…' } else { S 'Pobieranie kodu z GitHuba…' }
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -241,10 +243,9 @@ try {
   if ($p.ExitCode -ne 0) { throw 'budowanie nie powiodło się (szczegóły: update\build.log)' }
   }
   S 'Instalowanie…'
-  $hadExplorer = [bool](Get-Process explorer -ErrorAction SilentlyContinue)
-  $hadShell = [bool](Get-Process exploder -ErrorAction SilentlyContinue)
   # taskkill /f (kod wyjścia 1): po Stop-Process (kod -1) Windows sam uruchamia Eksplorator ponownie
-  & taskkill.exe /f /im exploder.exe /im exploder-terminal.exe /im exploder-calc.exe /im exploder-store.exe /im exploder-settings.exe 2>&1 | Out-Null
+  # przez cmd: „nie znaleziono procesu” (np. zamknięty Terminal) nie może przerwać skryptu ($ErrorActionPreference = 'Stop')
+  cmd /c 'taskkill /f /im exploder.exe /im exploder-terminal.exe /im exploder-calc.exe /im exploder-store.exe /im exploder-settings.exe >nul 2>&1'
   Start-Sleep 1
   Copy-Item (Join-Path $bld '*.exe') $Dest -Force
   Copy-Item (Join-Path $bld '*.pdb') $Dest -Force -ErrorAction SilentlyContinue
@@ -252,7 +253,7 @@ try {
   if (Test-Path (Join-Path $bld 'wallpapers')) { Copy-Item (Join-Path $bld 'wallpapers\*') (Join-Path $Dest 'wallpapers') -Force }
   if (-not $hadExplorer) {  # Eksplorator potrafi wrócić sam — zamykamy, aż zniknie
     for ($i = 0; $i -lt 5 -and (Get-Process explorer -ErrorAction SilentlyContinue); $i++) {
-      & taskkill.exe /f /im explorer.exe 2>&1 | Out-Null; Start-Sleep -Milliseconds 1500
+      cmd /c 'taskkill /f /im explorer.exe >nul 2>&1'; Start-Sleep -Milliseconds 1500
     }
   }
   if ($hadShell) { Run (Join-Path $Dest 'exploder.exe') '' }
@@ -261,6 +262,11 @@ try {
   Run (Join-Path $Dest 'exploder-settings.exe') '--aktualizacje'
 } catch {
   S ('BŁĄD ' + $_.Exception.Message)
+  # Cokolwiek się nie udało — powłoka nie może zostać zamknięta (bez niej nie ma pulpitu ani paska)
+  if ($hadShell -and -not (Get-Process exploder -ErrorAction SilentlyContinue)) {
+    $exe = Join-Path $Dest 'exploder.exe'
+    if (Test-Path $exe) { Run $exe '' } else { Start-Process explorer.exe }
+  }
 }
 )PS";
 

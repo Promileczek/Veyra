@@ -3,8 +3,8 @@
 // Ustawienia: ikona (dock, Alt+Tab, panel aplikacji) + opis programu (nazwa w docku)
 1 ICON "../../res/settings.ico"
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,1,5,0
-PRODUCTVERSION 1,1,5,0
+FILEVERSION 1,1,5,2
+PRODUCTVERSION 1,1,5,2
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -14,7 +14,7 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Ustawienia"
             VALUE "ProductName", "Exploder"
-            VALUE "FileVersion", "1.1.5"
+            VALUE "FileVersion", "1.1.5.2"
             VALUE "OriginalFilename", "exploder-settings.exe"
         END
     END
