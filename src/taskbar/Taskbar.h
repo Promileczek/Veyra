@@ -6,6 +6,7 @@
 #include "../shell/WindowTracker.h"
 #include "AppIcons.h"
 #include "Theme.h"
+#include "ClipboardPanel.h"
 #include "RunBox.h"
 #include "StartMenu.h"
 #include "TrayFlyout.h"
@@ -72,6 +73,7 @@ private:
     TrayFlyout trayFlyout_;
     StartMenu startMenu_;
     RunBox runBox_;  // Win+R
+    ClipboardPanel clip_;  // Win+V (Full)
     HHOOK winKeyHook_ = nullptr;
     bool winDown_ = false, winUsed_ = false;
     Tooltip tooltip_;

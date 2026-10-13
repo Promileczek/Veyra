@@ -130,6 +130,37 @@ inline bool ApplyLayout(std::vector<Monitor> list) {
     return ok;
 }
 
+// Tryby monitora (rozdzielczość + odświeżanie), 32-bit, od największych
+struct Mode {
+    int width = 0, height = 0, hz = 0;
+};
+inline std::vector<Mode> Modes(const std::wstring& device) {
+    std::vector<Mode> out;
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    for (DWORD i = 0; EnumDisplaySettingsW(device.c_str(), i, &dm); ++i) {
+        if (dm.dmBitsPerPel != 32 || dm.dmPelsWidth < 800) continue;
+        const Mode m{static_cast<int>(dm.dmPelsWidth), static_cast<int>(dm.dmPelsHeight), static_cast<int>(dm.dmDisplayFrequency)};
+        if (std::none_of(out.begin(), out.end(), [&](const Mode& o) { return o.width == m.width && o.height == m.height && o.hz == m.hz; }))
+            out.push_back(m);
+    }
+    std::sort(out.begin(), out.end(), [](const Mode& a, const Mode& b) {
+        return a.width != b.width ? a.width > b.width : (a.height != b.height ? a.height > b.height : a.hz > b.hz);
+    });
+    return out;
+}
+// Nowa rozdzielczość / częstotliwość; true = Windows przyjął
+inline bool SetMode(const std::wstring& device, int width, int height, int hz) {
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    if (!EnumDisplaySettingsW(device.c_str(), ENUM_CURRENT_SETTINGS, &dm)) return false;
+    dm.dmPelsWidth = static_cast<DWORD>(width);
+    dm.dmPelsHeight = static_cast<DWORD>(height);
+    dm.dmDisplayFrequency = static_cast<DWORD>(hz);
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+    return ChangeDisplaySettingsExW(device.c_str(), &dm, nullptr, CDS_UPDATEREGISTRY, nullptr) == DISP_CHANGE_SUCCESSFUL;
+}
+
 // Przyklejenie przeciąganego monitora do najbliższej krawędzi innego (bez nakładania i bez przerw)
 inline void Snap(std::vector<Monitor>& list, size_t moved) {
     if (list.size() < 2) return;

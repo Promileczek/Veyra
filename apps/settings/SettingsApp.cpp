@@ -7,6 +7,8 @@
 #include "../../src/core/Settings.h"
 #include "../../src/core/UiScale.h"
 #include "Displays.h"
+#include "Programs.h"
+#include "SystemInfo.h"
 #include "Updater.h"
 #include <objbase.h>
 #include <shellapi.h>
@@ -29,6 +31,7 @@ constexpr UINT WM_THUMBS = WM_APP + 30;  // miniatury tapet gotowe
 constexpr UINT_PTR kInfoTimer = 1;
 constexpr UINT_PTR kUpdateTimer = 2;     // odczyt postępu aktualizacji
 constexpr UINT_PTR kCalcTimer = 3;       // stan podmiany kalkulatora po zgodzie UAC
+constexpr UINT_PTR kModeTimer = 4;       // odliczanie: zachować nową rozdzielczość?
 constexpr UINT WM_CHECKED = WM_APP + 31;  // sprawdzanie wersji zakończone
 constexpr float kSideW = 210.f, kPad = 28.f, kRowH = 64.f;
 const D2D1_COLOR_F kBody = D2D1::ColorF(0x1C1C21), kSide = D2D1::ColorF(0x17171B), kAccent = D2D1::ColorF(0.38f, 0.70f, 1.f),
@@ -45,7 +48,7 @@ std::vector<int> VisibleSections() {
 }
 
 // Skala Veyry: wartości ustawienia "uiScale" (0 = auto)
-constexpr int kScales[] = {0, 75, 90, 100, 110, 125, 150};
+constexpr int kScales[] = {0, 75, 90, 100, 125, 150, 175};  // jak w Windows (+ mniejsze)
 
 std::wstring LowerCopy(std::wstring s) {
     std::transform(s.begin(), s.end(), s.begin(), ::towlower);
@@ -435,6 +438,21 @@ protected:
         }
         if (!displayStatus_.empty()) Text(dc, displayStatus_, descFormat_.Get(), {bxx + 8.f, y, R, y + 34.f}, White(0.6f));
         if (layoutChanged_ || Edition::Minimal() || !displayStatus_.empty()) y += 50.f;
+        // Po zmianie rozdzielczości: potwierdzenie albo powrót za 15 s (jak w Windows)
+        if (modeRevert_.device.size()) {
+            const D2D1_RECT_F bar{L, y, R, y + 56.f};
+            Fill(dc, bar, D2D1::ColorF(0.38f, 0.70f, 1.f, 0.14f), 12.f);
+            Text(dc, L"Zachować nowe ustawienia ekranu? Powrót do poprzednich za " + std::to_wstring(modeSeconds_) + L" s", titleFormat_.Get(),
+                 {bar.left + 18.f, bar.top, bar.right - 260.f, bar.bottom}, White(0.95f));
+            const D2D1_RECT_F keep{bar.right - 250.f, bar.top + 11.f, bar.right - 136.f, bar.bottom - 11.f};
+            const D2D1_RECT_F back{bar.right - 128.f, bar.top + 11.f, bar.right - 14.f, bar.bottom - 11.f};
+            Fill(dc, keep, kAccent, 8.f);
+            Text(dc, L"Zachowaj", buttonFormat_.Get(), keep, kOnAccent);
+            Button(dc, back, L"Przywróć", HitId(HitKind::ModeRevert, 0));
+            AddHit(keep, HitKind::ModeKeep, 0);
+            AddHit(back, HitKind::ModeRevert, 0);
+            y = bar.bottom + 14.f;
+        }
         // Lista monitorów
         if (!monitors_.empty()) {
             const D2D1_RECT_F list = Card(dc, y, static_cast<int>(monitors_.size()));
@@ -452,7 +470,14 @@ protected:
                     d += L"  ·  " + std::wstring(in);
                 }
                 d += L"  ·  skalowanie Windows " + std::to_wstring(m.scale) + L"%";
-                Text(dc, d, descFormat_.Get(), {r.left + 18.f, r.top + 32.f, r.right - 18.f, r.top + 52.f}, White(0.5f));
+                Text(dc, d, descFormat_.Get(), {r.left + 18.f, r.top + 32.f, r.right - 290.f, r.top + 52.f}, White(0.5f));
+                // Rozdzielczość i odświeżanie (menu z trybami monitora)
+                const D2D1_RECT_F res{r.right - 278.f, r.top + 16.f, r.right - 118.f, r.top + 48.f};
+                const D2D1_RECT_F hz{r.right - 110.f, r.top + 16.f, r.right - 18.f, r.top + 48.f};
+                Button(dc, res, (std::to_wstring(m.width) + L" × " + std::to_wstring(m.height) + L"  ▾").c_str(), HitId(HitKind::ResMenu, static_cast<int>(i)));
+                Button(dc, hz, (std::to_wstring(m.hz) + L" Hz  ▾").c_str(), HitId(HitKind::HzMenu, static_cast<int>(i)));
+                AddHit(res, HitKind::ResMenu, static_cast<int>(i));
+                AddHit(hz, HitKind::HzMenu, static_cast<int>(i));
             }
             y = list.bottom + 20.f;
         }
@@ -505,7 +530,49 @@ protected:
             Button(dc, b, L"Otwórz", HitId(HitKind::OpenApp, i));
             AddHit(b, HitKind::OpenApp, i);
         }
-        return list.bottom + 20.f;
+        y = list.bottom + 26.f;
+        return PaintPrograms(dc, y);
+    }
+
+    // Zainstalowane programy z odinstalowaniem; pisanie na tej stronie filtruje listę
+    float PaintPrograms(ID2D1DeviceContext* dc, float y) {
+        const float L = kSideW + kPad, R = widthDip_ - kPad;
+        Label(dc, (L"ZAINSTALOWANE PROGRAMY (" + std::to_wstring(programs_.size()) + L")").c_str(), L, y);
+        y += 24.f;
+        const D2D1_RECT_F search{L, y, R, y + 38.f};
+        Fill(dc, search, White(0.06f), 10.f);
+        Text(dc, L"\xE721", glyphFormat_.Get(), {search.left + 6.f, search.top, search.left + 36.f, search.bottom}, White(0.5f));
+        Text(dc, programQuery_.empty() ? L"Pisz, aby wyszukać program…" : programQuery_ + L"▏", descFormat_.Get(),
+             {search.left + 40.f, search.top, search.right - 12.f, search.bottom}, White(programQuery_.empty() ? 0.4f : 0.95f));
+        y = search.bottom + 12.f;
+        programView_.clear();
+        const std::wstring q = LowerCopy(programQuery_);
+        for (size_t i = 0; i < programs_.size(); ++i)
+            if (q.empty() || LowerCopy(programs_[i].name + L" " + programs_[i].publisher).find(q) != std::wstring::npos) programView_.push_back(i);
+        if (programView_.empty()) {
+            Text(dc, programs_.empty() ? L"Wczytywanie…" : L"Brak pasujących programów", descFormat_.Get(), {L, y, R, y + 20.f}, White(0.5f));
+            return y + 30.f;
+        }
+        const D2D1_RECT_F card = Card(dc, y, static_cast<int>(programView_.size()));
+        for (size_t n = 0; n < programView_.size(); ++n) {
+            const auto& p = programs_[programView_[n]];
+            const D2D1_RECT_F r{card.left, card.top + n * kRowH, card.right, card.top + (n + 1) * kRowH};
+            if (r.bottom < 0.f || r.top > heightDip_) continue;  // poza ekranem — bez rysowania
+            if (n) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
+            Text(dc, p.name, titleFormat_.Get(), {r.left + 18.f, r.top + 12.f, r.right - 140.f, r.top + 32.f}, White(0.95f));
+            std::wstring d = p.publisher;
+            if (!p.version.empty()) d += (d.empty() ? L"" : L"  ·  ") + p.version;
+            if (p.sizeKb) {
+                wchar_t sz[32];
+                swprintf_s(sz, p.sizeKb >= 1024 * 1024 ? L"%.1f GB" : L"%.0f MB", p.sizeKb >= 1024 * 1024 ? p.sizeKb / 1048576.0 : p.sizeKb / 1024.0);
+                d += (d.empty() ? L"" : L"  ·  ") + std::wstring(sz);
+            }
+            Text(dc, d, descFormat_.Get(), {r.left + 18.f, r.top + 32.f, r.right - 140.f, r.top + 52.f}, White(0.5f));
+            const D2D1_RECT_F b{r.right - 120.f, r.top + 16.f, r.right - 18.f, r.top + 48.f};
+            Button(dc, b, L"Odinstaluj", HitId(HitKind::Uninstall, static_cast<int>(n)));
+            AddHit(b, HitKind::Uninstall, static_cast<int>(n));
+        }
+        return card.bottom + 20.f;
     }
 
     float PaintSystem(ID2D1DeviceContext* dc, float y) {
@@ -651,36 +718,52 @@ protected:
     }
 
     float PaintAbout(ID2D1DeviceContext* dc, float y) {
-        const float L = kSideW + kPad, R = widthDip_ - kPad;
-        const D2D1_RECT_F card = Card(dc, y, 3);
-        auto row = [&](int i, const std::wstring& k, const std::wstring& v) {
-            const D2D1_RECT_F r{card.left, card.top + i * kRowH, card.right, card.top + (i + 1) * kRowH};
-            if (i) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
-            Text(dc, k, titleFormat_.Get(), {r.left + 18.f, r.top, r.left + 260.f, r.bottom}, White(0.95f));
-            Text(dc, v, descFormat_.Get(), {r.left + 260.f, r.top, r.right - 18.f, r.bottom}, White(0.6f));
+        const float L = kSideW + kPad;
+        auto table = [&](const wchar_t* label, const std::vector<SystemInfo::Row>& rows) {
+            Label(dc, label, L, y);
+            y += 24.f;
+            const D2D1_RECT_F card = Card(dc, y, static_cast<int>(rows.size()));
+            for (size_t i = 0; i < rows.size(); ++i) {
+                const D2D1_RECT_F r{card.left, card.top + i * kRowH, card.right, card.top + (i + 1) * kRowH};
+                if (i) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
+                Text(dc, rows[i].key, titleFormat_.Get(), {r.left + 18.f, r.top, r.left + 230.f, r.bottom}, White(0.95f));
+                Text(dc, rows[i].value, descFormat_.Get(), {r.left + 230.f, r.top, r.right - 18.f, r.bottom}, White(0.6f));
+            }
+            y = card.bottom + 22.f;
         };
-        row(0, L"Veyra " + Updater::Current(), L"Powłoka Windows zamiast explorer.exe");
-        row(1, L"Pamięć powłoki", memoryMb_ < 0 ? L"Powłoka nie działa" : std::to_wstring(memoryMb_) + L" MB RAM");
-        row(2, L"Dane i ustawienia", L"%LOCALAPPDATA%\\Exploder");
-        y = card.bottom + 22.f;
-        Label(dc, L"SKRÓTY KLAWISZOWE", L, y);
-        y += 24.f;
-        const wchar_t* keys[][2] = {{L"Windows", L"Menu Start"},
-                                    {L"Alt + Tab", L"Przełączanie okien z podglądem"},
-                                    {L"Windows + Shift + S", L"Zrzut ekranu: wycinek albo cały ekran"},
-                                    {L"Ctrl + Alt + Shift + Q", L"Awaryjny powrót do explorer.exe"}};
-        const D2D1_RECT_F kc = Card(dc, y, 4);
-        for (int i = 0; i < 4; ++i) {
-            const D2D1_RECT_F r{kc.left, kc.top + i * kRowH, kc.right, kc.top + (i + 1) * kRowH};
-            if (i) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
-            Text(dc, keys[i][0], titleFormat_.Get(), {r.left + 18.f, r.top, r.left + 260.f, r.bottom}, White(0.95f));
-            Text(dc, keys[i][1], descFormat_.Get(), {r.left + 260.f, r.top, r.right - 18.f, r.bottom}, White(0.6f));
+        // Veyra
+        table(L"VEYRA", {{L"Wersja", L"Veyra " + Updater::Current() + (Edition::Minimal() ? L" Minimal" : L" Full")},
+                         {L"Wydanie", Edition::Minimal() ? L"Minimal — wygląd Veyry, Eksplorator w tle, programy Windows"
+                                                        : L"Full — powłoka zamiast Eksploratora, aplikacje Veyry"},
+                         {L"Folder programu", ExeDir()},
+                         {L"Dane i ustawienia", L"%LOCALAPPDATA%\\Exploder"},
+                         {L"Pamięć powłoki", memoryMb_ < 0 ? L"Powłoka nie działa" : std::to_wstring(memoryMb_) + L" MB RAM"}});
+        // Komputer
+        if (hardware_.empty()) hardware_ = SystemInfo::Collect();
+        std::vector<SystemInfo::Row> hw = hardware_;
+        std::wstring mons;
+        for (const auto& m : monitors_)
+            mons += (mons.empty() ? L"" : L",  ") + m.name + L" " + std::to_wstring(m.width) + L"×" + std::to_wstring(m.height);
+        hw.push_back({L"Monitory (" + std::to_wstring(monitors_.size()) + L")", mons});
+        table(L"KOMPUTER", hw);
+        // Skróty
+        std::vector<SystemInfo::Row> keys = {{L"Windows", L"Menu Start Veyry"},
+                                             {L"Alt + Tab", L"Przełączanie okien z podglądem"},
+                                             {L"Ctrl + Alt + Shift + Q", L"Awaryjny powrót do explorer.exe"}};
+        if (!Edition::Minimal()) {
+            keys.push_back({L"Windows + R", L"Okienko „Uruchom” (cmd → Terminal, calc → Kalkulator)"});
+            keys.push_back({L"Windows + V", L"Historia schowka"});
+            keys.push_back({L"Windows + Shift + S", L"Zrzut ekranu: wycinek albo cały ekran"});
+            keys.push_back({L"F11", L"Pełny ekran w aplikacjach Veyry"});
+            keys.push_back({L"Ctrl + kółko myszy", L"Wielkość czcionki w Terminalu (Ctrl + 0 przywraca)"});
+            keys.push_back({L"Klawisz Kalkulator", L"Kalkulator Veyry"});
+        } else {
+            keys.push_back({L"Windows + R / V / Shift + S", L"Jak w Windows (Eksplorator działa w tle)"});
         }
-        y = kc.bottom + 18.f;
-        const D2D1_RECT_F gh{L, y, L + 170.f, y + 34.f};
+        table(L"SKRÓTY KLAWISZOWE", keys);
+        const D2D1_RECT_F gh{L, y - 4.f, L + 170.f, y + 30.f};
         Button(dc, gh, L"Projekt na GitHubie", HitId(HitKind::GitHub, 0));
         AddHit(gh, HitKind::GitHub, 0);
-        (void)R;
         return gh.bottom + 20.f;
     }
 
@@ -816,7 +899,7 @@ protected:
 
     // ---------------- Interakcja ----------------
     enum class HitKind { Section, Wallpaper, Toggle, FontMinus, FontPlus, OpenApp, WinLink, GitHub, CheckUpdate, DoUpdate, PickWallpaper, Scale,
-                         Monitor, ApplyLayout, ResetLayout, WindowsDisplay };
+                         Monitor, ApplyLayout, ResetLayout, WindowsDisplay, ResMenu, HzMenu, ModeKeep, ModeRevert, Uninstall };
     struct Hit {
         D2D1_RECT_F rect;
         int id;
@@ -881,6 +964,7 @@ protected:
                 KillTimer(hwnd_, kInfoTimer);
             }
             if (i == Updates) OpenUpdates();
+            if (i == Apps) programs_ = Programs::List();
             break;
         case HitKind::CheckUpdate:
             StartCheck();
@@ -969,6 +1053,22 @@ protected:
             layoutChanged_ = false;
             displayStatus_.clear();
             break;
+        case HitKind::Uninstall:
+            if (static_cast<size_t>(i) < programView_.size()) {
+                Programs::Uninstall(programs_[programView_[static_cast<size_t>(i)]]);  // odmowa UAC — nic się nie dzieje
+            }
+            break;
+        case HitKind::ResMenu:
+        case HitKind::HzMenu:
+            if (static_cast<size_t>(i) < monitors_.size()) ChooseMode(static_cast<size_t>(i), kind == HitKind::HzMenu);
+            break;
+        case HitKind::ModeKeep:
+            modeRevert_ = {};
+            KillTimer(hwnd_, kModeTimer);
+            break;
+        case HitKind::ModeRevert:
+            RevertMode();
+            break;
         case HitKind::WindowsDisplay:
             ShellExecuteW(nullptr, L"open", L"ms-settings:display", nullptr, nullptr, SW_SHOWNORMAL);
             break;
@@ -979,7 +1079,33 @@ protected:
         Redraw();
     }
 
+    // Szukanie programów: litery dopisują, Backspace kasuje, Esc czyści
+    void OnChar(wchar_t ch) override {
+        if (section_ != Apps) return;
+        if (ch == L'\b') {
+            if (!programQuery_.empty()) programQuery_.pop_back();
+        } else if (ch == 27) {
+            programQuery_.clear();
+        } else if (ch >= 32) {
+            programQuery_ += ch;
+            scroll_ = 0.f;
+        }
+        Redraw();
+    }
+    // Po powrocie z deinstalatora lista może być inna
+    void OnActivate(bool active) override {
+        if (active && section_ == Apps) {
+            programs_ = Programs::List();
+            Redraw();
+        }
+    }
+
     void OnTimer(UINT_PTR id) override {
+        if (id == kModeTimer) {
+            if (--modeSeconds_ <= 0) RevertMode();
+            Redraw();
+            return;
+        }
         if (id == kCalcTimer) {
             KillTimer(hwnd_, kCalcTimer);
             calcVeyra_ = CalcIsVeyra();
@@ -1032,6 +1158,54 @@ protected:
         return false;
     }
 
+    // Menu z rozdzielczościami albo częstotliwościami monitora; wybór zmienia tryb i włącza odliczanie potwierdzenia
+    void ChooseMode(size_t index, bool hzOnly) {
+        const Displays::Monitor m = monitors_[index];
+        const std::vector<Displays::Mode> modes = Displays::Modes(m.device);
+        std::vector<Displays::Mode> items;
+        for (const auto& md : modes) {
+            if (hzOnly ? (md.width == m.width && md.height == m.height)
+                       : std::none_of(items.begin(), items.end(), [&](const Displays::Mode& o) { return o.width == md.width && o.height == md.height; }))
+                items.push_back(md);
+        }
+        if (items.empty()) return;
+        HMENU menu = CreatePopupMenu();
+        for (size_t k = 0; k < items.size(); ++k) {
+            const bool current = hzOnly ? items[k].hz == m.hz : (items[k].width == m.width && items[k].height == m.height);
+            const std::wstring label = hzOnly ? std::to_wstring(items[k].hz) + L" Hz"
+                                              : std::to_wstring(items[k].width) + L" × " + std::to_wstring(items[k].height);
+            AppendMenuW(menu, MF_STRING | (current ? MF_CHECKED : 0), k + 1, label.c_str());
+        }
+        POINT pt{};
+        GetCursorPos(&pt);
+        const UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd_, nullptr);
+        DestroyMenu(menu);
+        if (!cmd) return;
+        Displays::Mode pick = items[cmd - 1];
+        if (!hzOnly) {  // nowa rozdzielczość: dotychczasowe odświeżanie, jeśli jest — inaczej najwyższe
+            for (const auto& md : modes)
+                if (md.width == pick.width && md.height == pick.height && md.hz == m.hz) pick.hz = m.hz;
+        }
+        if (pick.width == m.width && pick.height == m.height && pick.hz == m.hz) return;
+        if (modeRevert_.device.empty()) modeRevert_ = {m.device, m.width, m.height, m.hz};
+        if (Displays::SetMode(m.device, pick.width, pick.height, pick.hz)) {
+            modeSeconds_ = 15;
+            SetTimer(hwnd_, kModeTimer, 1000, nullptr);
+            displayStatus_.clear();
+        } else {
+            modeRevert_ = {};
+            displayStatus_ = L"Windows nie przyjął tego trybu.";
+        }
+        monitors_ = Displays::List();
+    }
+    void RevertMode() {
+        KillTimer(hwnd_, kModeTimer);
+        if (!modeRevert_.device.empty()) Displays::SetMode(modeRevert_.device, modeRevert_.width, modeRevert_.height, modeRevert_.hz);
+        modeRevert_ = {};
+        monitors_ = Displays::List();
+        Redraw();
+    }
+
     // Własna tapeta: systemowe okno wyboru, trafia na początek "Twoich tapet" (zostają 3 najnowsze)
     void PickWallpaper() {
         ComPtr<IFileOpenDialog> dialog;
@@ -1081,6 +1255,16 @@ protected:
     float viewK_ = 0.f, viewX_ = 0.f, viewY_ = 0.f;  // piksele monitorów → punkty widoku układu
     bool layoutChanged_ = false;
     std::wstring displayStatus_;
+    // Programy
+    std::vector<Programs::Program> programs_;
+    std::vector<size_t> programView_;
+    std::vector<SystemInfo::Row> hardware_;  // zbierane raz, przy pierwszym otwarciu Informacji
+    std::wstring programQuery_;
+    struct ModeRevert {
+        std::wstring device;
+        int width = 0, height = 0, hz = 0;
+    } modeRevert_;
+    int modeSeconds_ = 0;
     bool shellVeyra_ = false, confirmShell_ = false, calcVeyra_ = false;
     int memoryMb_ = -1;
     // Aktualizacje

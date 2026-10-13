@@ -44,6 +44,7 @@ private:
     void Update(Overlay& o);          // położenie + kolejność + kolor + rysowanie
     void Restack();                   // każda nakładka tuż nad swoim oknem (po zmianie aktywnego okna)
     void Hide(Overlay& o);
+    void Follow(Overlay& o);  // okno przeciągane: nakładka jedzie razem z nim
     bool SampleBackground(Overlay& o, const RECT& area);
     void StartResample(Overlay& o);
     void Render(Overlay& o);

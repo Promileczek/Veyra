@@ -141,11 +141,8 @@ void WindowDots::HandleEvent(DWORD event, HWND h, LONG) {
         for (auto& ov : overlays_) StartResample(*ov);
         Restack();
         break;
-    case EVENT_SYSTEM_MOVESIZESTART:
-        if (o) {
-            o->moving = true;
-            Hide(*o);
-        }
+    case EVENT_SYSTEM_MOVESIZESTART:  // przeciąganie / zmiana rozmiaru: kropki jadą z oknem (Follow), kolor po puszczeniu
+        if (o) o->moving = true;
         break;
     case EVENT_SYSTEM_MOVESIZEEND:
         if (o) {
@@ -157,8 +154,9 @@ void WindowDots::HandleEvent(DWORD event, HWND h, LONG) {
         if (o) Hide(*o);
         break;
     case EVENT_SYSTEM_MINIMIZEEND:
-    case EVENT_OBJECT_LOCATIONCHANGE:  // maksymalizacja, przywrócenie, przesunięcie przez program, wyjście z pełnego ekranu
-        if (o && !o->moving) Update(*o);
+    case EVENT_OBJECT_LOCATIONCHANGE:  // maksymalizacja, przywrócenie, przesunięcie (też myszą), wyjście z pełnego ekranu
+        if (o && o->moving) Follow(*o);
+        else if (o) Update(*o);
         break;
     case EVENT_OBJECT_SHOW:
         if (o) Update(*o);
@@ -300,6 +298,18 @@ void WindowDots::Update(Overlay& o) {
                  SWP_NOACTIVATE | SWP_SHOWWINDOW | (after ? 0 : SWP_NOZORDER));
     Render(o);
     StartResample(o);
+}
+
+void WindowDots::Follow(Overlay& o) {
+    RECT area{};
+    float scale = 1.f, dy = o.dy;
+    if (!enabled_ || !ButtonArea(o.target, area, scale, &dy)) return Hide(o);
+    RECT cur{};
+    GetWindowRect(o.hwnd, &cur);
+    const bool redraw = !IsWindowVisible(o.hwnd) || cur.right - cur.left != area.right - area.left || cur.bottom - cur.top != area.bottom - area.top;
+    SetWindowPos(o.hwnd, nullptr, area.left, area.top, area.right - area.left, area.bottom - area.top,
+                 SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+    if (redraw) Render(o);
 }
 
 void WindowDots::Restack() {
