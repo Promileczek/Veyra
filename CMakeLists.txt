@@ -7,6 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+# Wersja Veyry: plik VERSION (jedno źródło — porównywany z GitHubem w Ustawieniach → Aktualizacje)
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" VEYRA_VERSION)
+string(STRIP "${VEYRA_VERSION}" VEYRA_VERSION)
+add_compile_definitions(VEYRA_VERSION="${VEYRA_VERSION}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 
 add_executable(exploder WIN32
     src/main.cpp
@@ -67,6 +72,6 @@ foreach(app terminal calc store settings)
     endif()
     add_executable(exploder-${app} WIN32 ${src} apps/${app}/${app}.rc ${EXPLODER_APP_CORE})
     target_compile_options(exploder-${app} PRIVATE /W4 /utf-8 /permissive- /Zi)
-    target_link_libraries(exploder-${app} PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi user32 ole32 shell32 dxguid advapi32 shlwapi)
+    target_link_libraries(exploder-${app} PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi user32 ole32 shell32 dxguid advapi32 shlwapi winhttp)
     target_link_options(exploder-${app} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
 endforeach()

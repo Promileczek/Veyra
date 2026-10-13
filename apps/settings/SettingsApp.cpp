@@ -4,6 +4,7 @@
 // Zmiany zapisuje do settings.txt i rozsyła "VeyraSettingsChanged" — powłoka i terminal stosują je od razu.
 #include "../../src/core/AppWindow.h"
 #include "../../src/core/Settings.h"
+#include "Updater.h"
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -22,14 +23,16 @@
 namespace {
 constexpr UINT WM_THUMBS = WM_APP + 30;  // miniatury tapet gotowe
 constexpr UINT_PTR kInfoTimer = 1;
+constexpr UINT_PTR kUpdateTimer = 2;     // odczyt postępu aktualizacji
+constexpr UINT WM_CHECKED = WM_APP + 31;  // sprawdzanie wersji zakończone
 constexpr float kSideW = 210.f, kPad = 28.f, kRowH = 64.f;
 const D2D1_COLOR_F kBody = D2D1::ColorF(0x1C1C21), kSide = D2D1::ColorF(0x17171B), kAccent = D2D1::ColorF(0.38f, 0.70f, 1.f),
                    kOnAccent = D2D1::ColorF(0x0B1A26);
 D2D1_COLOR_F White(float a) { return D2D1::ColorF(1.f, 1.f, 1.f, a); }
 
-enum Section { Personalize, Desktop, Apps, System, About, SectionCount };
-const wchar_t* const kSectionNames[] = {L"Personalizacja", L"Pulpit i okna", L"Aplikacje", L"System", L"Informacje"};
-const wchar_t kSectionGlyphs[] = {L'\xE771', L'\xE7F4', L'\xE71D', L'\xE770', L'\xE946'};
+enum Section { Personalize, Desktop, Apps, System, Updates, About, SectionCount };
+const wchar_t* const kSectionNames[] = {L"Personalizacja", L"Pulpit i okna", L"Aplikacje", L"System", L"Aktualizacje", L"Informacje"};
+const wchar_t kSectionGlyphs[] = {L'\xE771', L'\xE7F4', L'\xE71D', L'\xE770', L'\xE895', L'\xE946'};
 
 struct WinLink {
     const wchar_t* label;
@@ -135,6 +138,7 @@ public:
         wallpaper_ = CurrentWallpaper();
         shellVeyra_ = ShellIsVeyra();
         StartThumbnails();
+        if (wcsstr(GetCommandLineW(), L"--aktualizacje")) OpenUpdates();
         Redraw();
         return true;
     }
@@ -142,6 +146,7 @@ public:
     ~SettingsApp() override {
         stop_ = true;
         if (thumbThread_.joinable()) thumbThread_.join();
+        if (checkThread_.joinable()) checkThread_.join();
     }
 
 protected:
@@ -177,6 +182,7 @@ protected:
         case Desktop: y = PaintDesktop(dc, y); break;
         case Apps: y = PaintApps(dc, y); break;
         case System: y = PaintSystem(dc, y); break;
+        case Updates: y = PaintUpdates(dc, y); break;
         case About: y = PaintAbout(dc, y); break;
         default: break;
         }
@@ -306,6 +312,113 @@ protected:
         return list.bottom + 20.f;
     }
 
+    float PaintUpdates(ID2D1DeviceContext* dc, float y) {
+        const float L = kSideW + kPad;
+        Label(dc, L"WERSJA", L, y);
+        y += 24.f;
+        const D2D1_RECT_F card = Card(dc, y, 3);
+        auto row = [&](int i, const std::wstring& k, const std::wstring& v, D2D1_COLOR_F c) {
+            const D2D1_RECT_F r{card.left, card.top + i * kRowH, card.right, card.top + (i + 1) * kRowH};
+            if (i) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
+            Text(dc, k, titleFormat_.Get(), {r.left + 18.f, r.top, r.left + 240.f, r.bottom}, White(0.95f));
+            Text(dc, v, titleFormat_.Get(), {r.left + 240.f, r.top, r.right - 18.f, r.bottom}, c);
+        };
+        const bool newer = checked_ && Updater::Compare(latest_, Updater::Current()) > 0;
+        row(0, L"Zainstalowana wersja", Updater::Current(), White(0.8f));
+        row(1, L"Najnowsza wersja", checking_ ? L"Sprawdzanie…" : checked_ ? latest_ : L"—", newer ? kAccent : White(0.8f));
+        std::wstring state;
+        D2D1_COLOR_F stateColor = White(0.8f);
+        if (updating_) state = L"Aktualizowanie…", stateColor = kAccent;
+        else if (checking_) state = L"Sprawdzanie…";
+        else if (!checkError_.empty()) state = L"Nie udało się sprawdzić", stateColor = D2D1::ColorF(0xFF8A80);
+        else if (!checked_) state = L"Nie sprawdzono";
+        else if (newer) state = L"Dostępna aktualizacja", stateColor = kAccent;
+        else state = L"\x2713  Masz najnowszą wersję", stateColor = D2D1::ColorF(0x5BD27A);
+        row(2, L"Stan", state, stateColor);
+        y = card.bottom + 16.f;
+
+        // Przyciski
+        const D2D1_RECT_F check{L, y, L + 150.f, y + 34.f};
+        if (!updating_ && !checking_) {
+            Button(dc, check, L"Sprawdź teraz", HitId(HitKind::CheckUpdate, 0));
+            AddHit(check, HitKind::CheckUpdate, 0);
+        }
+        if (newer && !updating_) {
+            const D2D1_RECT_F upd{check.right + 12.f, y, check.right + 232.f, y + 34.f};
+            if (tools_ || !binaryZip_.empty()) {  // gotowe pliki z wydania nie potrzebują Build Tools
+                Fill(dc, upd, hover_ == HitId(HitKind::DoUpdate, 0) ? D2D1::ColorF(0.48f, 0.77f, 1.f) : kAccent, 8.f);
+                Text(dc, L"Zaktualizuj do " + latest_, buttonFormat_.Get(), upd, kOnAccent);
+                AddHit(upd, HitKind::DoUpdate, 0);
+            } else {
+                Text(dc, L"Do aktualizacji potrzebne są Visual Studio Build Tools", descFormat_.Get(), {upd.left, y, widthDip_ - kPad, y + 34.f},
+                     D2D1::ColorF(0xFF8A80));
+            }
+        }
+        y += 46.f;
+        // Komunikat: błąd sprawdzania albo postęp/wynik aktualizacji
+        std::wstring note;
+        D2D1_COLOR_F noteColor = White(0.6f);
+        if (!checkError_.empty()) note = checkError_, noteColor = D2D1::ColorF(0xFF8A80);
+        if (!updateStatus_.empty()) {
+            if (updateStatus_.rfind(L"OK ", 0) == 0) note = L"Zaktualizowano do wersji " + updateStatus_.substr(3), noteColor = D2D1::ColorF(0x5BD27A);
+            else if (updateStatus_.rfind(L"BŁĄD", 0) == 0) note = L"Aktualizacja nie powiodła się: " + updateStatus_.substr(5), noteColor = D2D1::ColorF(0xFF8A80);
+            else note = updateStatus_, noteColor = kAccent;
+        }
+        if (!note.empty()) {
+            Text(dc, note, wrapFormat_.Get(), {L, y, widthDip_ - kPad, y + 40.f}, noteColor);
+            y += 44.f;
+        }
+        Text(dc, binaryZip_.empty() || !checked_
+                     ? L"Aktualizacja pobiera nową wersję z GitHuba (gotowe pliki z wydania albo kod, który zostanie zbudowany na tym komputerze). "
+                       L"Veyra zamknie się na chwilę, podmieni pliki i uruchomi ponownie. Gdy coś się nie uda, nic nie zostanie zmienione."
+                     : L"Aktualizacja pobiera gotowe pliki z wydania na GitHubie. Veyra zamknie się na chwilę, podmieni pliki i uruchomi ponownie.",
+             wrapFormat_.Get(), {L, y, widthDip_ - kPad, y + 40.f}, White(0.45f));
+        y += 52.f;
+
+        if (!changes_.empty()) {
+            Label(dc, L"CO NOWEGO (OSTATNIE ZMIANY)", L, y);
+            y += 24.f;
+            const int n = static_cast<int>(changes_.size());
+            const D2D1_RECT_F list = Card(dc, y, n);
+            for (int i = 0; i < n; ++i) {
+                const D2D1_RECT_F r{list.left, list.top + i * kRowH, list.right, list.top + (i + 1) * kRowH};
+                if (i) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
+                Text(dc, changes_[static_cast<size_t>(i)], descFormat_.Get(), {r.left + 18.f, r.top, r.right - 18.f, r.bottom}, White(0.8f));
+            }
+            y = list.bottom + 20.f;
+        }
+        return y;
+    }
+
+    // Wejście na zakładkę: stan skryptu (np. po aktualizacji) + sprawdzenie wersji raz na sesję
+    void OpenUpdates() {
+        section_ = Updates;
+        tools_ = Updater::BuildToolsAvailable();
+        updateStatus_ = Updater::Status();
+        const bool running = !updateStatus_.empty() && updateStatus_.rfind(L"OK ", 0) != 0 && updateStatus_.rfind(L"BŁĄD", 0) != 0;
+        if (running) {  // skrypt jeszcze pracuje (Ustawienia otwarte ponownie w trakcie)
+            updating_ = true;
+            SetTimer(hwnd_, kUpdateTimer, 700, nullptr);
+        }
+        if (!checked_ && !checking_) StartCheck();
+    }
+
+    void StartCheck() {
+        if (checking_) return;
+        checking_ = true;
+        checkError_.clear();
+        if (checkThread_.joinable()) checkThread_.join();
+        const HWND hwnd = hwnd_;
+        checkThread_ = std::thread([this, hwnd] {
+            Updater::CheckResult r = Updater::Check();
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                checkResult_ = std::move(r);
+            }
+            if (!stop_) PostMessageW(hwnd, WM_CHECKED, 0, 0);
+        });
+    }
+
     float PaintAbout(ID2D1DeviceContext* dc, float y) {
         const float L = kSideW + kPad, R = widthDip_ - kPad;
         const D2D1_RECT_F card = Card(dc, y, 3);
@@ -315,7 +428,7 @@ protected:
             Text(dc, k, titleFormat_.Get(), {r.left + 18.f, r.top, r.left + 260.f, r.bottom}, White(0.95f));
             Text(dc, v, descFormat_.Get(), {r.left + 260.f, r.top, r.right - 18.f, r.bottom}, White(0.6f));
         };
-        row(0, L"Veyra", L"Powłoka Windows zamiast explorer.exe");
+        row(0, L"Veyra " + Updater::Current(), L"Powłoka Windows zamiast explorer.exe");
         row(1, L"Pamięć powłoki", memoryMb_ < 0 ? L"Powłoka nie działa" : std::to_wstring(memoryMb_) + L" MB RAM");
         row(2, L"Dane i ustawienia", L"%LOCALAPPDATA%\\Exploder");
         y = card.bottom + 22.f;
@@ -465,7 +578,7 @@ protected:
     }
 
     // ---------------- Interakcja ----------------
-    enum class HitKind { Section, Wallpaper, Toggle, FontMinus, FontPlus, OpenApp, WinLink, GitHub };
+    enum class HitKind { Section, Wallpaper, Toggle, FontMinus, FontPlus, OpenApp, WinLink, GitHub, CheckUpdate, DoUpdate };
     struct Hit {
         D2D1_RECT_F rect;
         int id;
@@ -511,6 +624,19 @@ protected:
                 SetTimer(hwnd_, kInfoTimer, 2000, nullptr);
             } else {
                 KillTimer(hwnd_, kInfoTimer);
+            }
+            if (i == Updates) OpenUpdates();
+            break;
+        case HitKind::CheckUpdate:
+            StartCheck();
+            break;
+        case HitKind::DoUpdate:
+            if (Updater::Start(ExeDir(), latest_, binaryZip_)) {
+                updating_ = true;
+                updateStatus_ = L"Uruchamianie aktualizacji…";
+                SetTimer(hwnd_, kUpdateTimer, 700, nullptr);
+            } else {
+                updateStatus_ = L"BŁĄD nie udało się uruchomić skryptu aktualizacji";
             }
             break;
         case HitKind::Wallpaper: {
@@ -564,12 +690,33 @@ protected:
     }
 
     void OnTimer(UINT_PTR id) override {
+        if (id == kUpdateTimer) {  // postęp skryptu aktualizacji
+            updateStatus_ = Updater::Status();
+            if (updateStatus_.rfind(L"OK ", 0) == 0 || updateStatus_.rfind(L"BŁĄD", 0) == 0) {
+                updating_ = false;
+                KillTimer(hwnd_, kUpdateTimer);
+            }
+            Redraw();
+            return;
+        }
         if (id != kInfoTimer) return;
         memoryMb_ = ShellMemoryMb();
         Redraw();
     }
 
     bool OnMessage(UINT msg, WPARAM, LPARAM, LRESULT& result) override {
+        if (msg == WM_CHECKED) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            checking_ = false;
+            checked_ = checkResult_.ok;
+            latest_ = checkResult_.latest;
+            binaryZip_ = checkResult_.binaryZip;
+            checkError_ = checkResult_.ok ? L"" : checkResult_.error;
+            if (!checkResult_.changes.empty()) changes_ = checkResult_.changes;
+            Redraw();
+            result = 0;
+            return true;
+        }
         if (msg == WM_THUMBS) {
             Redraw();
             result = 0;
@@ -595,6 +742,12 @@ protected:
     std::wstring wallpaper_, shellError_;
     bool shellVeyra_ = false, confirmShell_ = false;
     int memoryMb_ = -1;
+    // Aktualizacje
+    std::thread checkThread_;
+    Updater::CheckResult checkResult_;
+    bool checking_ = false, checked_ = false, updating_ = false, tools_ = false;
+    std::wstring latest_, checkError_, updateStatus_, binaryZip_;
+    std::vector<std::wstring> changes_;
 
     std::mutex mutex_;
     std::vector<Thumb> thumbs_;
