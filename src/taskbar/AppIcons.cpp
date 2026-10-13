@@ -1,10 +1,13 @@
 #include "AppIcons.h"
 #include "../shell/TrayService.h"
+#include <appmodel.h>
 #include <propsys.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <algorithm>
+#include <cstdio>
+#include <string>
 #include <cwctype>
 #include <initializer_list>
 #include <vector>
@@ -23,17 +26,24 @@ std::wstring ProcessPath(HWND h) {
 }
 
 // Aplikacje UWP (Kalkulator, Ustawienia…) mają okno w procesie ApplicationFrameHost — ikonę i nazwę bierzemy z ich
-// identyfikatora (AppUserModelID okna) przez folder Aplikacje
-ComPtr<IShellItem> UwpItem(HWND h) {
+// identyfikatora (AppUserModelID okna, "RodzinaPakietu!IdAplikacji")
+std::wstring WindowAumid(HWND h) {
     static const PROPERTYKEY kAumid = {{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
     ComPtr<IPropertyStore> store;
-    ComPtr<IShellItem> item;
+    std::wstring id;
     PROPVARIANT v;
     PropVariantInit(&v);
     if (SUCCEEDED(SHGetPropertyStoreForWindow(h, IID_PPV_ARGS(&store))) && SUCCEEDED(store->GetValue(kAumid, &v)) &&
-        v.vt == VT_LPWSTR && v.pwszVal && *v.pwszVal)
-        SHCreateItemFromParsingName((std::wstring(L"shell:AppsFolder\\") + v.pwszVal).c_str(), nullptr, IID_PPV_ARGS(&item));
+        v.vt == VT_LPWSTR && v.pwszVal)
+        id = v.pwszVal;
     PropVariantClear(&v);
+    return id;
+}
+
+ComPtr<IShellItem> UwpItem(HWND h) {
+    ComPtr<IShellItem> item;
+    if (const std::wstring id = WindowAumid(h); !id.empty())
+        SHCreateItemFromParsingName((L"shell:AppsFolder\\" + id).c_str(), nullptr, IID_PPV_ARGS(&item));
     return item;
 }
 
@@ -45,7 +55,80 @@ std::wstring UwpName(HWND h) {
     return name;
 }
 
+// Logo bez płytki (Windows 10 rysuje ikony ze Sklepu na kolorowym kafelku): z paczki aplikacji plik
+// "<Square44x44Logo>.targetsize-N_altform-unplated.png" w rozmiarze najbliższym potrzebnemu
+std::wstring UnplatedLogo(const std::wstring& aumid, int px) {
+    const size_t bang = aumid.find(L'!');
+    if (bang == std::wstring::npos) return {};
+    const std::wstring family = aumid.substr(0, bang), appId = aumid.substr(bang + 1);
+    UINT32 count = 0, bufLen = 0;
+    if (GetPackagesByPackageFamily(family.c_str(), &count, nullptr, &bufLen, nullptr) != ERROR_INSUFFICIENT_BUFFER || !count) return {};
+    std::vector<PWSTR> names(count);
+    std::vector<wchar_t> buffer(bufLen);
+    if (GetPackagesByPackageFamily(family.c_str(), &count, names.data(), &bufLen, buffer.data()) != ERROR_SUCCESS) return {};
+    wchar_t dirBuf[MAX_PATH * 2]{};
+    UINT32 dirLen = ARRAYSIZE(dirBuf);
+    if (GetPackagePathByFullName(names[0], &dirLen, dirBuf) != ERROR_SUCCESS) return {};
+    const std::wstring dir = dirBuf;
+
+    // AppxManifest.xml: <Application Id="App" …> … Square44x44Logo="Assets\X.png"
+    std::string xml;
+    if (FILE* f = nullptr; !_wfopen_s(&f, (dir + L"\\AppxManifest.xml").c_str(), L"rb") && f) {
+        char chunk[8192];
+        for (size_t n; (n = fread(chunk, 1, sizeof(chunk), f)) > 0;) xml.append(chunk, n);
+        fclose(f);
+    }
+    std::string id;  // identyfikatory w manifeście są ASCII
+    for (wchar_t c : appId) id += static_cast<char>(c);
+    size_t at = xml.find("Id=\"" + id + "\"");
+    if (at == std::string::npos) at = 0;
+    const size_t logo = xml.find("Square44x44Logo=\"", at);
+    if (logo == std::string::npos) return {};
+    const size_t from = logo + 17, to = xml.find('"', from);
+    if (to == std::string::npos) return {};
+    std::wstring rel(xml.begin() + static_cast<std::ptrdiff_t>(from), xml.begin() + static_cast<std::ptrdiff_t>(to));
+    if (const size_t dot = rel.rfind(L'.'); dot != std::wstring::npos) rel.resize(dot);
+
+    std::wstring best;
+    int bestSize = 0;
+    WIN32_FIND_DATAW fd{};
+    const std::wstring base = dir + L"\\" + rel;
+    const std::wstring folder = base.substr(0, base.find_last_of(L'\\') + 1);
+    // Warianty: ".targetsize-N" (N px), ".scale-S" (44 px × S/100, np. Ustawienia), bez dopisku (44 px)
+    const struct {
+        const wchar_t* pattern;
+        const wchar_t* marker;
+        bool scale;
+    } variants[] = {{L".targetsize-*_altform-unplated.png", L".targetsize-", false},
+                    {L".scale-*_altform-unplated.png", L".scale-", true},
+                    {L".altform-unplated.png", nullptr, false}};
+    for (const auto& v : variants) {
+        const HANDLE find = FindFirstFileW((base + v.pattern).c_str(), &fd);
+        if (find == INVALID_HANDLE_VALUE) continue;
+        do {
+            const wchar_t* t = v.marker ? wcsstr(fd.cFileName, v.marker) : nullptr;
+            int size = t ? _wtoi(t + wcslen(v.marker)) : 44;
+            if (v.scale) size = size * 44 / 100;
+            // najmniejszy ≥ px, a gdy takiego nie ma — największy
+            if (size > 0 && (!bestSize || (bestSize < px ? size > bestSize : (size >= px && size < bestSize)))) {
+                best = folder + fd.cFileName;
+                bestSize = size;
+            }
+        } while (FindNextFileW(find, &fd));
+        FindClose(find);
+        if (!best.empty()) break;
+    }
+    return best;
+}
+
 ComPtr<IWICBitmapSource> LoadUwpIcon(IWICImagingFactory* wic, HWND h, int px) {
+    if (const std::wstring png = UnplatedLogo(WindowAumid(h), px); !png.empty()) {
+        ComPtr<IWICBitmapDecoder> decoder;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        if (SUCCEEDED(wic->CreateDecoderFromFilename(png.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder)) &&
+            SUCCEEDED(decoder->GetFrame(0, &frame)))
+            return frame;
+    }
     ComPtr<IShellItemImageFactory> factory;
     HBITMAP hbm = nullptr;
     const ComPtr<IShellItem> item = UwpItem(h);
