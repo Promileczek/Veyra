@@ -236,6 +236,10 @@ LRESULT AppWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
+        if (wp == VK_F11 && options_.resizable) {  // pełny ekran (zmaksymalizowane okno) / powrót
+            ShowWindow(hwnd_, IsZoomed(hwnd_) ? SW_RESTORE : SW_MAXIMIZE);
+            return 0;
+        }
         if (OnKeyDown(static_cast<UINT>(wp))) return 0;
         break;
     case WM_CHAR:

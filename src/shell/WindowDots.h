@@ -25,7 +25,7 @@ private:
         ComPtr<ID2D1SolidColorBrush> brush;
         D2D1_COLOR_F background{0.1f, 0.1f, 0.1f, 1.f};
         UINT dpi = 96;
-        float widthDip = 0.f, heightDip = 0.f, scale = 1.f;
+        float widthDip = 0.f, heightDip = 0.f, scale = 1.f, dy = 0.f;
         bool hover = false, trackingMouse = false, moving = false;
         int resampleTicks = 0;
     };
@@ -39,7 +39,8 @@ private:
     void Drop(HWND target);
     Overlay* Find(HWND target);
     bool IsCandidate(HWND h) const;   // okno, które w ogóle może mieć kropki (bez sprawdzania stanu)
-    bool ButtonArea(HWND target, RECT& out, float& scale) const;  // piksele ekranu; false = teraz bez kropek
+    bool ButtonArea(HWND target, RECT& out, float& scale, float* dy = nullptr) const;  // piksele ekranu; false = teraz bez kropek
+    void Periodic();  // co 1,5 s: nowe okna, schowane nakładki do pokazania, martwe okna
     void Update(Overlay& o);          // położenie + kolejność + kolor + rysowanie
     void Restack();                   // każda nakładka tuż nad swoim oknem (po zmianie aktywnego okna)
     void Hide(Overlay& o);
@@ -54,4 +55,5 @@ private:
     HWINEVENTHOOK objectHook_ = nullptr;    // zniszczenie/pokazanie/ukrycie okna
     HWINEVENTHOOK locationHook_ = nullptr;  // ruch/zmiana rozmiaru okien
     bool enabled_ = true;
+    UINT_PTR timer_ = 0;
 };

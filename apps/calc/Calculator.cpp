@@ -95,7 +95,8 @@ protected:
         dc->Clear(kBody);
 
         // Panel wyniku jak panele pulpitu: delikatne wypełnienie + jasna obwódka
-        const D2D1_RECT_F panel{kPad, titleH_ + 2.f, W - kPad, ChipsTop() - kGap - 2.f};
+        const D2D1_RECT_F panel{ColLeft(), titleH_ + 2.f, ColRight(), ChipsTop() - kGap - 2.f};
+        (void)W;
         Fill(dc, panel, White(0.05f), 16.f);
         brush_->SetColor(White(0.12f));
         dc->DrawRoundedRectangle(D2D1::RoundedRect({panel.left + 0.5f, panel.top + 0.5f, panel.right - 0.5f, panel.bottom - 0.5f}, 16.f, 16.f),
@@ -270,8 +271,13 @@ private:
 
     // Układ: klawiatura 4×5 na dole, nad nią rząd małych przycisków, wyżej karta z wynikiem
     D2D1_RECT_F Grid() const {
-        const float h = std::min(heightDip_ * 0.56f, (widthDip_ - 2 * kPad) * 1.15f);
-        return {kPad, heightDip_ - kPad - h, widthDip_ - kPad, heightDip_ - kPad};
+        const float h = std::min(heightDip_ * 0.56f, (ColRight() - ColLeft()) * 1.15f);
+        return {ColLeft(), heightDip_ - kPad - h, ColRight(), heightDip_ - kPad};
+    }
+    // Kolumna z kalkulatorem: na dużym oknie (pełny ekran) zachowuje proporcje i jest wyśrodkowana
+    float ColumnWidth() const { return std::min(widthDip_ - 2 * kPad, std::max(312.f, heightDip_ * 0.62f)); }
+    float ColLeft() const { return (widthDip_ - ColumnWidth()) / 2; }
+    float ColRight() const { return (widthDip_ + ColumnWidth()) / 2;
     }
     float ChipsTop() const { return Grid().top - kGap - kChipH; }
     D2D1_RECT_F KeyRect(int i) const {

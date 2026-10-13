@@ -24,6 +24,7 @@ namespace {
 constexpr UINT WM_THUMBS = WM_APP + 30;  // miniatury tapet gotowe
 constexpr UINT_PTR kInfoTimer = 1;
 constexpr UINT_PTR kUpdateTimer = 2;     // odczyt postępu aktualizacji
+constexpr UINT_PTR kCalcTimer = 3;       // stan podmiany kalkulatora po zgodzie UAC
 constexpr UINT WM_CHECKED = WM_APP + 31;  // sprawdzanie wersji zakończone
 constexpr float kSideW = 210.f, kPad = 28.f, kRowH = 64.f;
 const D2D1_COLOR_F kBody = D2D1::ColorF(0x1C1C21), kSide = D2D1::ColorF(0x17171B), kAccent = D2D1::ColorF(0.38f, 0.70f, 1.f),
@@ -83,6 +84,42 @@ bool SetShellVeyra(bool on) {
     return st == ERROR_SUCCESS;
 }
 
+// Kalkulator Veyry zamiast systemowego: Image File Execution Options\calc.exe\Debugger → exploder-calc.exe.
+// Każde uruchomienie calc.exe (Win+R, skróty, skrypty) otwiera Kalkulator Veyry; usunięcie wpisu przywraca systemowy.
+// HKLM wymaga administratora — bez uprawnień zapis przez reg.exe z prośbą UAC.
+constexpr wchar_t kIfeoCalc[] = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\calc.exe";
+
+bool CalcIsVeyra() {
+    wchar_t value[MAX_PATH * 2]{};
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, kIfeoCalc, L"Debugger", RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return false;
+    std::wstring v = value;
+    std::transform(v.begin(), v.end(), v.begin(), ::towlower);
+    return v.find(L"exploder-calc.exe") != std::wstring::npos;
+}
+// true = zapisane od razu; false = uruchomiono reg.exe z prośbą UAC (wynik sprawdzamy później)
+bool SetCalcVeyra(bool on) {
+    const std::wstring debugger = L"\"" + ExeDir() + L"exploder-calc.exe\"";
+    HKEY key = nullptr;
+    LSTATUS st = on ? RegCreateKeyExW(HKEY_LOCAL_MACHINE, kIfeoCalc, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr)
+                    : RegOpenKeyExW(HKEY_LOCAL_MACHINE, kIfeoCalc, 0, KEY_SET_VALUE, &key);
+    if (st == ERROR_SUCCESS) {
+        st = on ? RegSetValueExW(key, L"Debugger", 0, REG_SZ, reinterpret_cast<const BYTE*>(debugger.c_str()),
+                                 static_cast<DWORD>((debugger.size() + 1) * sizeof(wchar_t)))
+                : RegDeleteValueW(key, L"Debugger");
+        RegCloseKey(key);
+        if (st == ERROR_SUCCESS || (!on && st == ERROR_FILE_NOT_FOUND)) return true;
+    } else if (!on && st == ERROR_FILE_NOT_FOUND) {
+        return true;
+    }
+    // Brak uprawnień: reg.exe jako administrator
+    const std::wstring regKey = L"\"HKLM\\" + std::wstring(kIfeoCalc) + L"\"";
+    const std::wstring args = on ? L"add " + regKey + L" /v Debugger /t REG_SZ /d \"\\\"" + ExeDir() + L"exploder-calc.exe\\\"\" /f"
+                                 : L"delete " + regKey + L" /v Debugger /f";
+    ShellExecuteW(nullptr, L"runas", L"reg.exe", args.c_str(), nullptr, SW_HIDE);
+    return false;
+}
+
 // Pamięć prywatna powłoki (exploder.exe) w MB; -1 = nie działa
 int ShellMemoryMb() {
     int mb = -1;
@@ -137,6 +174,7 @@ public:
         }
         wallpaper_ = CurrentWallpaper();
         shellVeyra_ = ShellIsVeyra();
+        calcVeyra_ = CalcIsVeyra();
         StartThumbnails();
         if (wcsstr(GetCommandLineW(), L"--aktualizacje")) OpenUpdates();
         Redraw();
@@ -289,7 +327,10 @@ protected:
     float PaintSystem(ID2D1DeviceContext* dc, float y) {
         Label(dc, L"POWŁOKA", kSideW + kPad, y);
         y += 24.f;
-        const D2D1_RECT_F card = Card(dc, y, 1);
+        const D2D1_RECT_F card = Card(dc, y, 2);
+        Toggle(dc, card, 1, L"Kalkulator Veyry zamiast Kalkulatora Windows",
+               L"calc.exe (Win+R, skróty, klawisz Kalkulator) otwiera Kalkulator Veyry. Wymaga uprawnień administratora", calcVeyra_, 2);
+        Fill(dc, {card.left + 18.f, card.top + kRowH, card.right - 18.f, card.top + kRowH + 1.f}, White(0.06f));
         const wchar_t* desc = confirmShell_ ? L"Kliknij jeszcze raz, aby potwierdzić. Awaryjnie: Ctrl+Alt+Shift+Q albo Menedżer zadań → explorer.exe"
                                             : L"Tylko dla Twojego konta. Wyłączenie przywraca Eksplorator przy następnym logowaniu";
         Toggle(dc, card, 0, L"Uruchamiaj Veyrę zamiast Eksploratora po zalogowaniu", desc, shellVeyra_, 1);
@@ -653,6 +694,9 @@ protected:
             if (i == 0) {
                 Settings::SetBool(L"windowDots", !Settings::GetBool(L"windowDots", true));
                 Broadcast();
+            } else if (i == 2) {
+                if (SetCalcVeyra(!calcVeyra_)) calcVeyra_ = CalcIsVeyra();
+                else SetTimer(hwnd_, kCalcTimer, 1500, nullptr);  // po zgodzie UAC sprawdzamy ponownie
             } else if (i == 1) {
                 if (!shellVeyra_ && !confirmShell_) {  // włączenie wymaga drugiego kliknięcia
                     confirmShell_ = true;
@@ -690,6 +734,12 @@ protected:
     }
 
     void OnTimer(UINT_PTR id) override {
+        if (id == kCalcTimer) {
+            KillTimer(hwnd_, kCalcTimer);
+            calcVeyra_ = CalcIsVeyra();
+            Redraw();
+            return;
+        }
         if (id == kUpdateTimer) {  // postęp skryptu aktualizacji
             updateStatus_ = Updater::Status();
             if (updateStatus_.rfind(L"OK ", 0) == 0 || updateStatus_.rfind(L"BŁĄD", 0) == 0) {
@@ -740,7 +790,7 @@ protected:
     int section_ = Personalize, hover_ = -1;
     float scroll_ = 0.f, contentH_ = 0.f;
     std::wstring wallpaper_, shellError_;
-    bool shellVeyra_ = false, confirmShell_ = false;
+    bool shellVeyra_ = false, confirmShell_ = false, calcVeyra_ = false;
     int memoryMb_ = -1;
     // Aktualizacje
     std::thread checkThread_;

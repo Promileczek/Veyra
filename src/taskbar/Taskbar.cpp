@@ -419,6 +419,8 @@ LRESULT CALLBACK Taskbar::WinKeyHook(int code, WPARAM wp, LPARAM lp) {
         } else if (win) {
             if (t.winDown_ && !t.winUsed_) PostMessageW(t.hwnd_, WM_START_KEY, 0, 0);
             t.winDown_ = false;
+        } else if (down && k.vkCode == VK_LAUNCH_APP2) {  // klawisz Kalkulator → Kalkulator Veyry
+            PostMessageW(t.hwnd_, WM_START_KEY, 1, 0);
         } else if (down && t.winDown_) {
             t.winUsed_ = true;
         }
@@ -753,7 +755,15 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_START_KEY:
-        ToggleStartMenu();
+        if (wp == 1) {  // klawisz Kalkulator
+            wchar_t exe[MAX_PATH]{};
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            std::wstring path = exe;
+            path = path.substr(0, path.find_last_of(L'\\') + 1) + L"exploder-calc.exe";
+            ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        } else {
+            ToggleStartMenu();
+        }
         return 0;
     case WM_DESTROY: {
         if (winKeyHook_) UnhookWindowsHookEx(winKeyHook_);

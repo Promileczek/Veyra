@@ -47,7 +47,8 @@ Kind KindOf(HWND h) {
 }
 
 // Środek pierwszej kropki: grupa przy prawej krawędzi, w miejscu przycisku "zamknij"
-D2D1_POINT_2F DotsOrigin(float w, float h, float k) { return {w - 18.f * k - 40.f * k, h / 2}; }
+// dy: przesunięcie w dół (Brave/Chrome — kropki na wysokości kart, nie przy samej krawędzi)
+D2D1_POINT_2F DotsOrigin(float w, float h, float k, float dy) { return {w - 18.f * k - 40.f * k, h / 2 + dy}; }
 
 // hWndInsertAfter, żeby nakładka leżała tuż nad oknem; nullptr = już tam jest
 HWND InsertAfterFor(HWND target, HWND self) {
@@ -75,10 +76,33 @@ bool WindowDots::Install(HINSTANCE inst, Graphics& g) {
     objectHook_ = SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, nullptr, OnEvent, 0, 0, WINEVENT_OUTOFCONTEXT);
     locationHook_ = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, nullptr, OnEvent, 0, 0, WINEVENT_OUTOFCONTEXT);
     if (enabled_) ScanAll();
+    // Co 1,5 s: nowe okna bez zdarzenia, schowane nakładki, które już mogą się pokazać (np. okno Chromium było
+    // ukryte/w animacji, gdy przyszło zdarzenie), martwe okna
+    timer_ = SetTimer(nullptr, 0, 1500, [](HWND, UINT, UINT_PTR, DWORD) {
+        if (g_instance) g_instance->Periodic();
+    });
     return true;
 }
 
+void WindowDots::Periodic() {
+    if (!enabled_) return;
+    for (size_t i = overlays_.size(); i-- > 0;)
+        if (!IsWindow(overlays_[i]->target) || !IsWindowVisible(overlays_[i]->target)) Drop(overlays_[i]->target);
+    EnumWindows(
+        [](HWND h, LPARAM p) -> BOOL {
+            reinterpret_cast<WindowDots*>(p)->Track(h);
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(this));
+    RECT area{};
+    float scale = 1.f;
+    for (auto& o : overlays_)
+        if (!o->moving && !IsWindowVisible(o->hwnd) && ButtonArea(o->target, area, scale)) Update(*o);
+}
+
 void WindowDots::Uninstall() {
+    if (timer_) KillTimer(nullptr, timer_);
+    timer_ = 0;
     for (HWINEVENTHOOK* h : {&systemHook_, &objectHook_, &locationHook_})
         if (*h) {
             UnhookWinEvent(*h);
@@ -112,6 +136,7 @@ void WindowDots::HandleEvent(DWORD event, HWND h, LONG) {
     switch (event) {
     case EVENT_SYSTEM_FOREGROUND:
         if (!o) Track(GetAncestor(h, GA_ROOT));
+        else if (!o->moving) Update(*o);  // mogła zostać schowana (okno w trakcie pokazywania/animacji)
         // Aktywne/nieaktywne okna mają inne kolory paska — nowa próbka dla wszystkich
         for (auto& ov : overlays_) StartResample(*ov);
         Restack();
@@ -197,8 +222,9 @@ void WindowDots::Drop(HWND target) {
     if (o->hwnd) DestroyWindow(o->hwnd);
 }
 
-bool WindowDots::ButtonArea(HWND t, RECT& out, float& scale) const {
+bool WindowDots::ButtonArea(HWND t, RECT& out, float& scale, float* dy) const {
     scale = 1.f;
+    if (dy) *dy = 0.f;
     if (!t || !IsWindowVisible(t) || IsIconic(t) || WorkArea::IsFullscreenWindow(t)) return false;
     DWORD cloaked = 0;  // np. okno na innym pulpicie wirtualnym
     if (SUCCEEDED(DwmGetWindowAttribute(t, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) return false;
@@ -211,6 +237,7 @@ bool WindowDots::ButtonArea(HWND t, RECT& out, float& scale) const {
         // Brave/Chrome: 3 przyciski 45×29 DIP; Discord (zmierzone): 36×32 DIP
         const float bw = kind == Kind::Browser ? 3 * 45.f : 3 * 36.f, bh = kind == Kind::Browser ? 29.f : 32.f;
         scale = kind == Kind::Browser ? 1.3f : 1.f;
+        if (dy && kind == Kind::Browser) *dy = 4.f;
         out = {frame.right - static_cast<LONG>(bw * s), frame.top, frame.right, frame.top + static_cast<LONG>(bh * s)};
         return true;
     }
@@ -262,7 +289,7 @@ void WindowDots::StartResample(Overlay& o) {
 void WindowDots::Update(Overlay& o) {
     RECT area{};
     float scale = 1.f;
-    if (!enabled_ || o.moving || !ButtonArea(o.target, area, scale)) return Hide(o);
+    if (!enabled_ || o.moving || !ButtonArea(o.target, area, scale, &o.dy)) return Hide(o);
     o.scale = scale;
     o.dpi = GetDpiForWindow(o.target);
     SampleBackground(o, area);
@@ -299,7 +326,7 @@ void WindowDots::Render(Overlay& o) {
     o.widthDip = rc.right * 96.f / o.dpi;
     o.heightDip = rc.bottom * 96.f / o.dpi;
     dc->Clear(o.background);  // zakrywa przyciski Windows
-    TrafficLights::Draw(dc, o.brush.Get(), DotsOrigin(o.widthDip, o.heightDip, o.scale), o.hover, true, o.scale);
+    TrafficLights::Draw(dc, o.brush.Get(), DotsOrigin(o.widthDip, o.heightDip, o.scale, o.dy), o.hover, true, o.scale);
     if (!o.surface.End()) {
         o.surface = Surface{};
         o.brush.Reset();
@@ -352,7 +379,7 @@ LRESULT WindowDots::HandleMessage(Overlay& o, UINT msg, WPARAM wp, LPARAM lp) {
         const HWND t = o.target;
         if (!t || !IsWindow(t)) return 0;
         const D2D1_POINT_2F p{GET_X_LPARAM(lp) * 96.f / o.dpi, GET_Y_LPARAM(lp) * 96.f / o.dpi};
-        switch (TrafficLights::HitTest(DotsOrigin(o.widthDip, o.heightDip, o.scale), p, o.scale)) {
+        switch (TrafficLights::HitTest(DotsOrigin(o.widthDip, o.heightDip, o.scale, o.dy), p, o.scale)) {
         case 0: PostMessageW(t, WM_SYSCOMMAND, SC_CLOSE, 0); break;
         case 1: PostMessageW(t, WM_SYSCOMMAND, SC_MINIMIZE, 0); break;
         case 2: PostMessageW(t, WM_SYSCOMMAND, IsZoomed(t) ? SC_RESTORE : SC_MAXIMIZE, 0); break;
