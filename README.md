@@ -9,7 +9,7 @@
 [![Stars](https://img.shields.io/github/stars/Promileczek/Veyra?style=for-the-badge&color=yellow)](../../stargazers)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white)
 
-[Budowanie](#-budowanie-i-uruchamianie) · [Funkcje](#-funkcje) · [Skróty](#%EF%B8%8F-skróty-klawiszowe) · [Zgłoś błąd](../../issues)
+[Instalacja](#-instalacja) · [Budowanie](#-budowanie) · [Funkcje](#-funkcje) · [Skróty](#%EF%B8%8F-skróty-klawiszowe) · [Zgłoś błąd](../../issues)
 
 <img src="https://placehold.co/900x450?text=Screenshot+Veyra" alt="Veyra screenshot" width="85%">
 
@@ -19,10 +19,17 @@
 
 ## 🎯 O projekcie
 
-**Veyra** zastępuje `explorer.exe` jako powłoka systemu. Pisana w C++ (Direct2D + DirectComposition), lekka — cała powłoka zajmuje ok. 90 MB RAM.
+**Veyra** zastępuje `explorer.exe` jako powłoka systemu. Pisana w C++ (Direct2D + DirectComposition), lekka — działa w jednym procesie C++.
 
-> [!NOTE]
-> Powłoka włącza się w pełni (pulpit, zasobnik, Alt+Tab), gdy `explorer.exe` nie działa. Uruchomiona obok Eksploratora działa jako sam dock i górny pasek.
+Dostępne w dwóch wersjach (wybierasz w instalatorze):
+
+| Wersja | Opis |
+| --- | --- |
+| **Minimal** | Działa razem z `explorer.exe` w tle (ukrywa jego pasek i pulpit). Zostają systemowe aplikacje Windows (Kalkulator, Ustawienia, Sklep), działają powiadomienia i aplikacje UWP. Bez kropek macOS i aplikacji Veyry. |
+| **Full** | Veyra zastępuje `explorer.exe` jako powłoka. Własne aplikacje (Terminal, Kalkulator, Sklep, Ustawienia, Pliki) i kropki macOS w oknach. Aplikacje UWP nie startują, a część funkcji Windows (Centrum akcji, Win+Tab) nie działa. |
+
+> [!WARNING]
+> Projekt jest we wczesnej fazie i ma jeszcze sporo błędów. Zawsze pamiętaj o powrocie do Eksploratora: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd>.
 
 ## ✨ Funkcje
 
@@ -34,14 +41,26 @@
 | 🔀 Alt+Tab z podglądem okien | ✅ |
 | 📁 Menedżer plików | ✅ |
 | 💻 Terminal, 🧮 Kalkulator, 🛍️ Sklep | ✅ |
-| ⚙️ Ustawienia | ✅ |
+| ⚙️ Ustawienia i aktualizacje | ✅ |
+| 📦 Instalator (Minimal / Full) | ✅ |
 | 🔔 Powiadomienia | 📋 |
 | 🎨 Motywy | 📋 |
 | 🖥️ Wiele monitorów | 📋 |
 
 ✅ gotowe · 🚧 w trakcie · 📋 planowane
 
-## 🚀 Budowanie i uruchamianie
+## 📦 Instalacja
+
+1. Pobierz `VeyraSetup.exe` z [wydań](../../releases).
+2. Uruchom, wybierz wersję **Minimal** albo **Full** i zainstaluj (do `C:\Program Files\Veyra`, wymaga UAC).
+3. Odinstalowanie: Aplikacje Windows → Veyra (albo `VeyraSetup.exe /odinstaluj`). Przywraca Eksplorator i Kalkulator Windows.
+
+> [!TIP]
+> Powrót do Eksploratora: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd> albo PPM na docku → „Wróć do explorer.exe”. Gdyby powłoka się zawiesiła: Menedżer zadań → Uruchom nowe zadanie → `explorer.exe`.
+
+Aktualizacje: Ustawienia → **Aktualizacje** (wersja w pliku `VERSION`, porównywana z najnowszym wydaniem na GitHubie).
+
+## 🔨 Budowanie
 
 Wymagania: Windows 10 1809+ (ConPTY), Visual Studio 2022 Build Tools (MSVC, Windows SDK, CMake, Ninja).
 
@@ -49,12 +68,7 @@ Wymagania: Windows 10 1809+ (ConPTY), Visual Studio 2022 Build Tools (MSVC, Wind
 build.bat
 ```
 
-Wynik trafia do `%LOCALAPPDATA%\Exploder\build\`: `exploder.exe` (powłoka) oraz `exploder-terminal.exe`, `exploder-calc.exe`, `exploder-store.exe`, `exploder-settings.exe`.
-
-Uruchomienie jako powłoka: zamknij `explorer.exe` (Menedżer zadań → Eksplorator Windows → Zakończ zadanie) i uruchom `exploder.exe`.
-
-> [!TIP]
-> Chcesz wrócić do Eksploratora? <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd> albo PPM na docku → „Wróć do explorer.exe”. Gdyby powłoka się zawiesiła: Menedżer zadań → Uruchom nowe zadanie → `explorer.exe`.
+Wynik trafia do `%LOCALAPPDATA%\Exploder\build\`: `exploder.exe` (powłoka), `exploder-terminal.exe`, `exploder-calc.exe`, `exploder-store.exe`, `exploder-settings.exe` oraz `veyra-setup.exe` (instalator).
 
 Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, statystyki użycia, `crash.dmp` przy awarii).
 
@@ -74,6 +88,7 @@ Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, s
 - [x] Menedżer plików
 - [x] Terminal, Kalkulator, Sklep
 - [x] Ustawienia i własna tapeta
+- [x] Instalator (Minimal / Full) i aktualizacje
 - [ ] Powiadomienia
 - [ ] Motywy
 - [ ] Wiele monitorów
@@ -88,7 +103,7 @@ Ustawienia i dane: `%LOCALAPPDATA%\Exploder\` (`settings.txt`, `launcher.txt`, s
 | `src/desktop` | Pulpit, panel aplikacji, panel plików, statystyki |
 | `src/files` | Menedżer plików |
 | `src/topbar` | Górny pasek: sieć, muzyka, głośność |
-| `apps/` | Terminal, Kalkulator, Sklep, Ustawienia |
+| `apps/` | Terminal, Kalkulator, Sklep, Ustawienia, instalator |
 | `res/`, `tools/` | Ikony, tapeta i ich generatory |
 
 ## 📄 Licencja
