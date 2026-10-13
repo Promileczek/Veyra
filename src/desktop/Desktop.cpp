@@ -1,5 +1,4 @@
 #include "Desktop.h"
-#include "../core/Edition.h"
 #include <knownfolders.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -92,8 +91,7 @@ bool Desktop::Create(HINSTANCE inst, Graphics& g, std::function<void(ComPtr<IShe
         RequestRedraw();
     });
     launcher_.openFolder = openFolder_;
-    launcher_.openFiles = [this] {  // kafelek "Pliki" — panel po lewej wraca (Minimal: Eksplorator)
-        if (Edition::Minimal()) return Edition::OpenInExplorer(nullptr);
+    launcher_.openFiles = [this] {  // kafelek "Pliki" — panel po lewej wraca
         files_.Show();
         files_.SetFocused(true);
     };
@@ -108,7 +106,6 @@ bool Desktop::Create(HINSTANCE inst, Graphics& g, std::function<void(ComPtr<IShe
                      RequestRedraw();
                  },
                  openFolder_});
-    if (Edition::Minimal()) files_.Disable();
     if (!CreateResources()) return false;
     UpdateWorkArea();
     DrawWallpaper();

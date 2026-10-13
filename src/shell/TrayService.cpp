@@ -1,4 +1,6 @@
 #include "TrayService.h"
+#include "../core/Edition.h"
+#include "ExplorerUi.h"
 #include <shellapi.h>
 #include <algorithm>
 #include <cstring>
@@ -32,6 +34,7 @@ static_assert(sizeof(NotifyIconData32) == 956, "musi odpowiadać 32-bitowemu NOT
 constexpr DWORD kTraySignature = 0x34753423;
 constexpr ULONG_PTR kCopyDataNotifyIcon = 1;
 constexpr wchar_t kTrayClass[] = L"Shell_TrayWnd";
+constexpr UINT_PTR kOrderTimer = 1, kRebroadcastTimer = 2;
 
 template <typename H>
 H FromHandle32(DWORD v) {
@@ -40,7 +43,7 @@ H FromHandle32(DWORD v) {
 }  // namespace
 
 bool TrayService::Start(HINSTANCE inst, ChangeFn onChange) {
-    if (FindWindowW(kTrayClass, nullptr)) return false;  // explorer.exe działa
+    if (!Edition::Minimal() && FindWindowW(kTrayClass, nullptr)) return false;  // explorer.exe działa
     onChange_ = std::move(onChange);
 
     WNDCLASSEXW wc{sizeof(wc)};
@@ -52,10 +55,19 @@ bool TrayService::Start(HINSTANCE inst, ChangeFn onChange) {
                             inst, nullptr);
     if (!hwnd_) return false;
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
-
+    if (Edition::Minimal()) {  // pilnujemy kolejności względem Eksploratora (jak ManagedShell: co 100 ms)
+        EnsureFirst();
+        SetTimer(hwnd_, kOrderTimer, 100, nullptr);
+    }
     // Po tym komunikacie programy dodają swoje ikony od nowa (jak po restarcie explorera).
-    SendNotifyMessageW(HWND_BROADCAST, RegisterWindowMessageW(L"TaskbarCreated"), 0, 0);
+    BroadcastTaskbarCreated();
     return true;
+}
+
+void TrayService::BroadcastTaskbarCreated() {
+    selfBroadcast_ = true;  // do naszego okna dociera od razu (ten sam wątek) — swojego nie liczymy
+    SendNotifyMessageW(HWND_BROADCAST, RegisterWindowMessageW(L"TaskbarCreated"), 0, 0);
+    selfBroadcast_ = false;
 }
 
 void TrayService::Stop() {
@@ -64,13 +76,64 @@ void TrayService::Stop() {
     icons_.clear();
     if (hwnd_) DestroyWindow(hwnd_);
     hwnd_ = nullptr;
+    if (Edition::Minimal()) BroadcastTaskbarCreated();  // ikony znowu u Eksploratora
 }
 
 LRESULT CALLBACK TrayService::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_COPYDATA)
-        if (auto* self = reinterpret_cast<TrayService*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)))
-            return self->OnCopyData(reinterpret_cast<const COPYDATASTRUCT*>(lp));
+    auto* self = reinterpret_cast<TrayService*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!self) return DefWindowProcW(hwnd, msg, wp, lp);
+    static const UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    if (msg == WM_TIMER) {
+        if (wp == kRebroadcastTimer) {
+            KillTimer(hwnd, kRebroadcastTimer);
+            self->BroadcastTaskbarCreated();
+        }
+        self->EnsureFirst();
+        return 0;
+    }
+    if (msg == taskbarCreated) {
+        // Eksplorator wystartował od nowa: programy dodały ikony u niego — po chwili prosimy o to jeszcze raz
+        if (!self->selfBroadcast_ && Edition::Minimal()) SetTimer(hwnd, kRebroadcastTimer, 1500, nullptr);
+        return 0;
+    }
+    if (self && msg == WM_COPYDATA) {
+        const auto* cds = reinterpret_cast<const COPYDATASTRUCT*>(lp);
+        // Minimal: Eksplorator dostaje wszystko jak dotąd (AppBar, położenie ikon, a ikony zachowa po wyjściu z Veyry)
+        DWORD_PTR forwarded = 0;
+        const HWND explorer = self->ExplorerTray();
+        if (explorer) SendMessageTimeoutW(explorer, WM_COPYDATA, wp, lp, SMTO_ABORTIFHUNG, 1000, &forwarded);
+        if (cds && cds->dwData == kCopyDataNotifyIcon) return self->OnCopyData(cds);
+        return explorer ? static_cast<LRESULT>(forwarded) : FALSE;
+    }
+    // Pozostałe komunikaty programów do paska (WM_COMMAND, WM_USER+…) — też do Eksploratora
+    if (msg == WM_COMMAND || msg >= WM_USER) {
+        if (const HWND explorer = self->ExplorerTray()) {
+            if (msg == WM_USER + 372) {
+                PostMessageW(explorer, msg, wp, lp);
+                return 0;
+            }
+            DWORD_PTR r = 0;
+            SendMessageTimeoutW(explorer, msg, wp, lp, SMTO_ABORTIFHUNG, 1000, &r);
+            return static_cast<LRESULT>(r);
+        }
+    }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+HWND TrayService::ExplorerTray() const {
+    if (!Edition::Minimal()) return nullptr;
+    HWND h = nullptr;
+    while ((h = FindWindowExW(nullptr, h, kTrayClass, nullptr)) != nullptr)
+        if (h != hwnd_ && ExplorerUi::IsExplorerWindow(h)) return h;
+    return nullptr;
+}
+
+void TrayService::EnsureFirst() {
+    if (!hwnd_ || FindWindowW(kTrayClass, nullptr) == hwnd_) return;
+    // Pasek Eksploratora na spód, nasze okno na wierzch — programy znajdują wtedy nasze
+    if (const HWND explorer = ExplorerTray())
+        SetWindowPos(explorer, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 TrayIcon* TrayService::Find(HWND owner, UINT id, const GUID* guid) {

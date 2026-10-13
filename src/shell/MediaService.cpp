@@ -19,6 +19,7 @@ struct MediaService::Impl : std::enable_shared_from_this<MediaService::Impl> {
     UINT message = 0;
     std::atomic<bool> stopped{false};
     std::atomic<bool> polling{false};  // tryb zastępczy (brak explorera)
+    ULONGLONG startTick = 0;
 
     // Tryb zastępczy
     HWND source = nullptr;
@@ -138,6 +139,7 @@ MediaService::~MediaService() { Stop(); }
 void MediaService::Start(HWND notify, UINT message) {
     impl_->hwnd = notify;
     impl_->message = message;
+    impl_->startTick = GetTickCount64();
     std::weak_ptr<Impl> weak = impl_;
     try {
         Manager::RequestAsync().Completed([weak](const IAsyncOperation<Manager>& op, AsyncStatus status) {
@@ -223,7 +225,13 @@ void FallbackCommand(HWND source, bool spotify, short appCommand, WORD mediaKey)
 }
 }  // namespace
 
-bool MediaService::UsesPolling() const { return impl_->polling; }
+// Tryb zastępczy także wtedy, gdy Windows nie zgłasza błędu, ale po 3 s nie ma menedżera ani sesji
+// (bez explorera RequestAsync potrafi nie wrócić wcale albo zwraca menedżera bez sesji)
+bool MediaService::UsesPolling() const {
+    if (impl_->polling) return true;
+    if (GetTickCount64() - impl_->startTick < 3000) return false;
+    return !impl_->Current();
+}
 
 void MediaService::Poll() {
     Candidate found[2];  // [0] Spotify, [1] przeglądarka z YouTube

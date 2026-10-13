@@ -30,6 +30,7 @@ add_executable(exploder WIN32
     src/shell/SystemStats.cpp
     src/shell/AltTab.cpp
     src/shell/WindowDots.cpp
+    src/shell/ExplorerUi.cpp
     src/taskbar/Taskbar.cpp
     src/taskbar/AppIcons.cpp
     src/taskbar/TrayFlyout.cpp

@@ -20,8 +20,9 @@ struct TrayIcon {
 };
 
 // Zasobnik systemowy: ukryte okno "Shell_TrayWnd", do którego programy wysyłają swoje ikony
-// (Shell_NotifyIcon → WM_COPYDATA). Działa tylko gdy explorer.exe nie jest uruchomiony —
-// inaczej to explorer dostaje ikony.
+// (Shell_NotifyIcon → WM_COPYDATA). Bez explorer.exe jesteśmy jedynym zasobnikiem. W Veyrze Minimal explorer działa
+// w tle: nasze okno jest pierwsze w kolejności (programy szukają go przez FindWindow), a każdy WM_COPYDATA
+// (ikony, komunikaty AppBar, położenie ikon) przekazujemy dalej do Eksploratora.
 class TrayService {
 public:
     using ChangeFn = std::function<void()>;
@@ -39,10 +40,14 @@ public:
 
 private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    HWND ExplorerTray() const;  // Shell_TrayWnd Eksploratora (Minimal), nullptr = brak
+    void EnsureFirst();         // nasze okno przed Eksploratorem; inaczej ikony trafiają tylko do niego
+    void BroadcastTaskbarCreated();
     BOOL OnCopyData(const COPYDATASTRUCT* cds);
     TrayIcon* Find(HWND owner, UINT id, const GUID* guid);
 
     HWND hwnd_ = nullptr;
+    bool selfBroadcast_ = false;
     std::vector<TrayIcon> icons_;
     ChangeFn onChange_;
 };

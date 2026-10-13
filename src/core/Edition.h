@@ -4,8 +4,9 @@
 #include <shellapi.h>
 
 // Wersja Veyry z instalatora. Plik "veyra-minimal" obok exploder.exe → Minimal: sam wygląd powłoki (pulpit, dock,
-// górny pasek, menu Start, Alt+Tab) — bez kropek w oknach, panelu i okien "Pliki" oraz aplikacji Veyry; zamiast nich
-// systemowe (Eksplorator, cmd, Kalkulator, Microsoft Store, ustawienia Windows). Brak pliku → Full (też build deweloperski).
+// górny pasek, menu Start, Alt+Tab, panel "Pliki" z plikami pulpitu) — bez kropek w oknach, okien "Pliki" i aplikacji
+// Veyry; zamiast nich systemowe (Eksplorator, cmd, Kalkulator, Microsoft Store, ustawienia Windows), a explorer.exe
+// działa w tle (src/shell/ExplorerUi.h). Brak pliku → Full (też build deweloperski).
 namespace Edition {
 inline bool Minimal() {
     static const bool minimal = [] {

@@ -419,9 +419,16 @@ LRESULT CALLBACK Taskbar::WinKeyHook(int code, WPARAM wp, LPARAM lp) {
             if (!t.winDown_) t.winUsed_ = false;  // pierwsze wciśnięcie (nie autopowtarzanie)
             t.winDown_ = true;
         } else if (win) {
-            if (t.winDown_ && !t.winUsed_) PostMessageW(t.hwnd_, WM_START_KEY, 0, 0);
+            const bool alone = t.winDown_ && !t.winUsed_;
             t.winDown_ = false;
-        } else if (down && k.vkCode == VK_LAUNCH_APP2) {  // klawisz Kalkulator → Kalkulator Veyry
+            if (alone && Edition::Minimal() && !(k.flags & LLKHF_INJECTED)) {
+                // Eksplorator w tle otworzyłby swoje menu Start: puszczenie Win wstrzymujemy i wysyłamy je jeszcze
+                // raz po nieprzypisanym klawiszu (0xE8) — dla Eksploratora to wtedy skrót, nie sam Win
+                PostMessageW(t.hwnd_, WM_START_KEY, 2, k.vkCode);
+                return 1;
+            }
+            if (alone) PostMessageW(t.hwnd_, WM_START_KEY, 0, 0);
+        } else if (down && k.vkCode == VK_LAUNCH_APP2 && !Edition::Minimal()) {  // klawisz Kalkulator → Kalkulator Veyry
             PostMessageW(t.hwnd_, WM_START_KEY, 1, 0);
         } else if (down && t.winDown_) {
             t.winUsed_ = true;
@@ -641,6 +648,11 @@ LRESULT CALLBACK Taskbar::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
+    static const UINT quitMessage = RegisterWindowMessageW(L"VeyraQuit");  // instalator: zamknij się porządnie
+    if (msg == quitMessage) {
+        Quit(false);
+        return 0;
+    }
     if (msg == Settings::ChangedMessage()) {
         Settings::Reload();
         if (onSettingsChanged_) onSettingsChanged_();
@@ -765,6 +777,16 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             if (Edition::Minimal()) path = L"calc.exe";
             ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         } else {
+            if (wp == 2) {  // Minimal: maska + puszczenie Win (patrz WinKeyHook)
+                INPUT in[3]{};
+                for (INPUT& i : in) i.type = INPUT_KEYBOARD;
+                in[0].ki.wVk = 0xE8;
+                in[1].ki.wVk = 0xE8;
+                in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+                in[2].ki.wVk = static_cast<WORD>(lp);
+                in[2].ki.dwFlags = KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY;
+                SendInput(3, in, sizeof(INPUT));
+            }
             ToggleStartMenu();
         }
         return 0;

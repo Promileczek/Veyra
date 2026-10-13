@@ -31,6 +31,7 @@ D2D1_COLOR_F White(float a) { return D2D1::ColorF(1.f, 1.f, 1.f, a); }
 constexpr wchar_t kUninstallKey[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Veyra";
 constexpr wchar_t kIfeoCalc[] = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\calc.exe";
 constexpr wchar_t kWinlogon[] = L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon";
+constexpr wchar_t kRun[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kCalcProtocol[] = L"Software\\Classes\\ms-calculator\\shell";
 constexpr wchar_t kMarker[] = L"veyra-minimal";  // plik obok exploder.exe = wersja Minimal (src/core/Edition.h)
 
@@ -123,7 +124,14 @@ void KillProcesses(Pred pred) {
         }
     }
 }
-void KillVeyra() { KillProcesses(IsVeyraProcess); }
+// Najpierw porządnie (Minimal przywraca wtedy pasek i pulpit Eksploratora), potem na siłę
+void KillVeyra() {
+    const UINT quit = RegisterWindowMessageW(L"VeyraQuit");
+    HWND h = nullptr;
+    while ((h = FindWindowExW(nullptr, h, L"ExploderTaskbar", nullptr)) != nullptr) PostMessageW(h, quit, 0, 0);
+    for (int i = 0; i < 20 && VeyraRunning(); ++i) Sleep(200);
+    KillProcesses(IsVeyraProcess);
+}
 
 bool StartProcess(const std::wstring& exe, const std::wstring& args = L"", bool hidden = false, DWORD* exitCode = nullptr) {
     std::wstring cmd = L"\"" + exe + L"\"" + (args.empty() ? L"" : L" " + args);
@@ -354,11 +362,11 @@ protected:
 
         const float top = 118.f, cardH = 150.f, gap = 16.f, cw = (W - 2 * kPad - gap) / 2;
         Edition(dc, {kPad, top, kPad + cw, top + cardH}, L"Minimal",
-                L"Sam wygląd: pulpit z tapetą, dock, górny pasek, menu Start i Alt+Tab. Pliki, kalkulator i pozostałe "
-                L"programy zostają systemowe.",
+                L"Sam wygląd: pulpit z tapetą i panelem Pliki, dock, górny pasek, menu Start i Alt+Tab. Eksplorator działa "
+                L"w tle, programy zostają systemowe.",
                 !full_, HitMinimal);
         Edition(dc, {kPad + cw + gap, top, W - kPad, top + cardH}, L"Full",
-                L"Wszystko z Minimal, a do tego kropki w oknach, Pliki, Terminal, Kalkulator (zamiast systemowego), "
+                L"Wszystko z Minimal, a do tego kropki w oknach, okna Pliki, Terminal, Kalkulator (zamiast systemowego), "
                 L"Sklep i Ustawienia z aktualizacjami.",
                 full_, HitFull);
 
@@ -579,13 +587,22 @@ private:
             if (!RestoreCalculatorApp()) note_ = L"\n\nKalkulatora Windows nie udało się przywrócić — zainstaluj go ze Sklepu Microsoft.";
         }
 
-        // Powłoka po zalogowaniu (HKCU — konto użytkownika, nie administratora)
-        const std::wstring shell = L"\"" + dir + L"\\exploder.exe\"";
-        if (useNow_ || Lower(RegString(HKEY_CURRENT_USER, kWinlogon, L"Shell")).find(L"exploder.exe") != std::wstring::npos)
-            RegSetString(HKEY_CURRENT_USER, kWinlogon, L"Shell", shell);
+        // Po zalogowaniu (HKCU — konto użytkownika, nie administratora). Full: Veyra zamiast Eksploratora (Winlogon
+        // Shell). Minimal: Eksplorator zostaje powłoką, Veyra startuje z autostartu (Run) i chowa jego pasek i pulpit.
+        const std::wstring exe = L"\"" + dir + L"\\exploder.exe\"";
+        const bool shellOurs = Lower(RegString(HKEY_CURRENT_USER, kWinlogon, L"Shell")).find(L"exploder.exe") != std::wstring::npos;
+        const bool using_ = useNow_ || shellOurs || !RegString(HKEY_CURRENT_USER, kRun, L"Veyra").empty();
+        if (full) {
+            if (using_) RegSetString(HKEY_CURRENT_USER, kWinlogon, L"Shell", exe);
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, kRun, L"Veyra");
+        } else {
+            if (shellOurs) RegDeleteKeyValueW(HKEY_CURRENT_USER, kWinlogon, L"Shell");
+            if (using_) RegSetString(HKEY_CURRENT_USER, kRun, L"Veyra", exe);
+        }
         if (useNow_ || wasRunning_) {
             Step(0.85f, L"Uruchamianie Veyry…");
-            StartVeyraShell(dir);
+            if (full) StartVeyraShell(dir);
+            else StartProcess(dir + L"\\exploder.exe");  // sama uruchomi Eksplorator, jeśli nie działa
         }
         Step(1.f, L"Gotowe");
         return {};
@@ -598,6 +615,7 @@ private:
         Sleep(1500);  // Windows potrafi sam uruchomić Eksplorator po zamknięciu powłoki
         if (Lower(RegString(HKEY_CURRENT_USER, kWinlogon, L"Shell")).find(L"exploder.exe") != std::wstring::npos)
             RegDeleteKeyValueW(HKEY_CURRENT_USER, kWinlogon, L"Shell");
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRun, L"Veyra");
         if (!ExplorerRunning()) {
             wchar_t win[MAX_PATH]{};
             GetWindowsDirectoryW(win, MAX_PATH);

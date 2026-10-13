@@ -8,6 +8,7 @@
 #include "desktop/Desktop.h"
 #include "files/FileWindow.h"
 #include "shell/AltTab.h"
+#include "shell/ExplorerUi.h"
 #include "shell/WindowDots.h"
 #include "taskbar/Taskbar.h"
 #include "topbar/TopBar.h"
@@ -15,6 +16,7 @@
 // Awaria → %LOCALAPPDATA%\Exploder\crash.dmp (otwierany w Visual Studio / WinDbg razem z exploder.pdb).
 // Windows i tak przywróci wtedy explorer.exe.
 static LONG WINAPI WriteCrashDump(EXCEPTION_POINTERS* info) {
+    if (Edition::Minimal()) ExplorerUi::Restore();  // pasek i pulpit Eksploratora z powrotem
     wchar_t path[MAX_PATH]{};
     const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", path, MAX_PATH);
     wcscpy_s(path + n, MAX_PATH - n, L"\\Exploder\\crash.dmp");
@@ -47,7 +49,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     int code = 1;
     {
         // Tryb powłoki: explorer.exe nie działa → my rysujemy pulpit i obsługujemy zasobnik.
-        const bool shellMode = !FindWindowW(L"Shell_TrayWnd", nullptr) && !GetShellWindow();
+        // Minimal: explorer.exe w tle (UWP, powiadomienia), jego pasek i pulpit chowamy — poza tym jak tryb powłoki.
+        const bool minimal = Edition::Minimal() && ExplorerUi::EnsureRunning();
+        if (minimal) {
+            ExplorerUi::Hide();
+            SetTimer(nullptr, 0, 1000, [](HWND, UINT, UINT_PTR, DWORD) { ExplorerUi::KeepHidden(); });
+        }
+        const bool shellMode = minimal || (!FindWindowW(L"Shell_TrayWnd", nullptr) && !GetShellWindow());
         Graphics graphics;
         Desktop desktop;
         Taskbar taskbar;
@@ -95,6 +103,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         topBar.Destroy();
         desktop.Destroy();
     }
+    if (Edition::Minimal()) ExplorerUi::Restore();
     OleUninitialize();
     if (mutex) CloseHandle(mutex);
     return code;
