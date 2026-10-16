@@ -88,9 +88,45 @@ def setup():
     return img
 
 
+def veyra():  # logo Veyry: pełne „V” (klin) w akcencie na graficie
+    img = base((0x2A, 0x2A, 0x31), (0x18, 0x18, 0x1D))
+    d = ImageDraw.Draw(img)
+    pts = [(140, 150), (225, 150), (S // 2, 300), (S - 225, 150), (S - 140, 150), (S // 2, 380)]
+    d.polygon(pts, fill=(0x61, 0xB3, 0xFF))
+    return img
+
+
+def folder():  # ikona folderu w stylu Veyry: gładki, niebieski gradient
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([96, 150, 300, 210], radius=24, fill=(0x4C, 0xA8, 0xFF))  # zakładka
+    body_t, body_b = (0x6F, 0xBD, 0xFF), (0x2E, 0x72, 0xE6)
+    mask = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([96, 180, S - 96, S - 120], radius=40, fill=255)
+    grad = Image.new("RGBA", (S, S))
+    gd = ImageDraw.Draw(grad)
+    for y in range(S):
+        t = max(0.0, min(1.0, (y - 180) / (S - 300)))
+        gd.line([(0, y), (S, y)], fill=tuple(int(body_t[i] + (body_b[i] - body_t[i]) * t) for i in range(3)) + (255,))
+    img.paste(grad, (0, 0), mask)
+    return img
+
+
+def taskmgr():
+    img = base((0x2A, 0x2A, 0x31), (0x18, 0x18, 0x1D))  # grafit Veyry
+    d = ImageDraw.Draw(img)
+    for i in range(4):  # siatka wykresu
+        y = 150 + i * 70
+        d.line([(96, y), (S - 96, y)], fill=(0x34, 0x34, 0x3C), width=6)
+    pulse = [(96, 300), (176, 300), (214, 196), (262, 372), (304, 250), (338, 300), (S - 96, 300)]  # wykres obciążenia
+    d.line(pulse, fill=(0x61, 0xB3, 0xFF), width=34, joint="curve")
+    return img
+
+
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
-    for name, fn in (("terminal", terminal), ("calculator", calculator), ("store", store), ("settings", settings), ("setup", setup)):
+    for name, fn in (("terminal", terminal), ("calculator", calculator), ("store", store), ("settings", settings), ("setup", setup),
+                     ("taskmgr", taskmgr), ("veyra", veyra), ("folder", folder)):
         fn().save(OUT / f"{name}.ico", sizes=SIZES)
         fn().resize((128, 128), Image.LANCZOS).save(OUT / f"{name}.png")
         print("ok", name)

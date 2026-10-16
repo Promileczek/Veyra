@@ -135,7 +135,7 @@ ComPtr<IWICBitmapSource> LoadUwpIcon(IWICImagingFactory* wic, HWND h, int px) {
     if (!item || FAILED(item.As(&factory)) || FAILED(factory->GetImage({px, px}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &hbm)))
         return nullptr;
     ComPtr<IWICBitmap> bmp;
-    const HRESULT hr = wic->CreateBitmapFromHBITMAP(hbm, nullptr, WICBitmapUsePremultipliedAlpha, &bmp);
+    const HRESULT hr = wic->CreateBitmapFromHBITMAP(hbm, nullptr, WICBitmapUseAlpha, &bmp);
     DeleteObject(hbm);
     return SUCCEEDED(hr) ? bmp : nullptr;
 }
@@ -182,7 +182,7 @@ ComPtr<IWICBitmapSource> LoadExeIcon(IWICImagingFactory* wic, const std::wstring
         FAILED(factory->GetImage({px, px}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &hbm)))
         return nullptr;
     ComPtr<IWICBitmap> bmp;
-    const HRESULT hr = wic->CreateBitmapFromHBITMAP(hbm, nullptr, WICBitmapUsePremultipliedAlpha, &bmp);
+    const HRESULT hr = wic->CreateBitmapFromHBITMAP(hbm, nullptr, WICBitmapUseAlpha, &bmp);
     DeleteObject(hbm);
     return SUCCEEDED(hr) ? bmp : nullptr;
 }
@@ -248,7 +248,20 @@ std::wstring AppNameForWindow(HWND hwnd) {
     for (const auto& [p, name] : cache)
         if (p == path) return name;
     const std::wstring app = AppName(path);
-    if (app == L"applicationframehost") return UwpName(hwnd);  // różne aplikacje w jednym procesie — bez pamięci
+    if (app == L"applicationframehost") {  // różne aplikacje w jednym procesie — bez pamięci
+        // Nazwa z AUMID ramki, a bez niego z okna aplikacji w środku (CoreWindow w procesie aplikacji);
+        // nigdy sama ramka („Application Frame Host”)
+        std::wstring name = UwpName(hwnd);
+        const std::wstring frame = FileDescription(path);
+        if (name.empty() || name == frame) {
+            HWND core = FindWindowExW(hwnd, nullptr, L"Windows.UI.Core.CoreWindow", nullptr);
+            DWORD framePid = 0, corePid = 0;
+            GetWindowThreadProcessId(hwnd, &framePid);
+            if (core) GetWindowThreadProcessId(core, &corePid);
+            name = core && corePid != framePid ? AppNameForWindow(core) : std::wstring();
+        }
+        return name == frame ? std::wstring() : name;
+    }
     std::wstring name = app == L"cmd" || app == L"conhost" ? L"Wiersz polecenia" : FileDescription(path);
     if (name.empty()) name = app;
     if (cache.size() > 200) cache.clear();

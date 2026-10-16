@@ -18,7 +18,7 @@ Wklej to (albo każ przeczytać ten plik) na początku nowej sesji. Szczegóły:
 - Sesja Claude Code ma NO_COLOR=1 itp. — Veyra przy starcie odtwarza środowisko użytkownika (Environment::ResetFromUser), więc to już nie przecieka.
 
 ## Stan funkcji (1.1.5.2)
-- **Instalator** (`apps/setup`): Minimal / Full, „Używaj Veyry od razu”, Program Files\Veyra, UAC tylko dla plików i HKLM (`/wykonaj …`), deinstalator (`/odinstaluj`, kopia w %TEMP%), wpis w Aplikacjach Windows. Minimal startuje z HKCU Run, Full jako HKCU Winlogon Shell. Zamykanie Veyry komunikatem „VeyraQuit”.
+- **Instalator** (`apps/setup`): Minimal / Full, „Używaj Veyry od razu”, Program Files\Veyra, UAC tylko dla plików i HKLM (`/wykonaj …`; od rundy 3 z 13.10.2026 w buildzie także zadanie Harmonogramu `\Veyra\Veyra Update` — `/zadanie`, `/wykonaj zadanie <SID>`, niezainstalowane), deinstalator (`/odinstaluj`, kopia w %TEMP%), wpis w Aplikacjach Windows. Minimal startuje z HKCU Run, Full jako HKCU Winlogon Shell. Zamykanie Veyry komunikatem „VeyraQuit”.
 - **Minimal**: Eksplorator w tle (pasek/pulpit schowane — `src/shell/ExplorerUi`), zasobnik Veyry przed Eksploratorem (TrayService, jak ManagedShell), klawisz Win → menu Veyry (maska 0xE8), działają aplikacje UWP, GSMTC, powiadomienia Windows. Panel Pliki jest; okien Pliki, kropek i aplikacji Veyry nie ma (oprócz Ustawień: Ekran + Informacje).
 - **Full**: bez Eksploratora; Kalkulator Veyry zamiast systemowego (IFEO calc.exe + ms-calculator:, Kalkulator ze Sklepu odinstalowany — deinstalacja go przywraca).
 - **Skala Veyry** (`src/core/UiScale.h`): auto (dopasowanie do ekranu, 1600×900 DIP) albo 75–175%, zmiana na żywo (komunikat „VeyraUiScaleChanged”).
@@ -26,11 +26,12 @@ Wklej to (albo każ przeczytać ten plik) na początku nowej sesji. Szczegóły:
 - **Powiadomienie o aktualizacji** (`src/shell/Notification`): sprawdzanie minutę po starcie i co 6 h, karta w prawym górnym rogu, wjazd/wyjazd z animacją, 12 s. Test: `updateNotifyTest=1` w settings.txt.
 - **Win+V** — historia schowka (Full, `src/taskbar/ClipboardPanel`).
 - Dock: ikony UWP z AUMID bez płytki; kropki macOS jadą z przeciąganym oknem; górny pasek: zwarty blok muzyki na środku.
-- Aktualizator (`apps/settings/Updater.h`): taskkill przez `cmd /c` (błąd z 1.1.5 naprawiony w 1.1.5.2), przy błędzie zawsze uruchamia Veyrę; w Program Files skrypt przez UAC, potem Veyra przez `runas /trustlevel:0x20000`.
+- Aktualizator (`apps/settings/Updater.h`): taskkill przez `cmd /c` (błąd z 1.1.5 naprawiony w 1.1.5.2), przy błędzie zawsze uruchamia Veyrę; **stan 1.1.5.2 (zainstalowane wydanie)**: w Program Files skrypt przez UAC, potem Veyra przez `runas /trustlevel:0x20000`. **W buildzie po 1.1.5.2 (niezainstalowane, 13.10.2026)**: skrypt z konta użytkownika, tylko podmiana plików jako administrator (`-CopyFrom`, RunAs), bez `runas /trustlevel`; przy zadaniu Harmonogramu i oficjalnym wydaniu bez UAC (prośby „pobierz” → „zainstaluj”); Full zamyka Eksplorator wchodzący na miejsce powłoki (`ExplorerUi::CloseExplorerShell`). Szczegóły: projekt.md, Runda 3.
 - Diagnostyka: `VEYRA_VT_LOG=plik` — surowe wyjście konsoli w Terminalu.
 
 ## Stan tego komputera
 - Zainstalowana Veyra **Full 1.1.5** z poprawionym skryptem aktualizacji (do testu powiadomienia o 1.1.5.2; użytkownik zaktualizował przez powiadomienie — wtedy wrócił Eksplorator, błąd wpisany w PLAN_1.2.md).
+- Nowszy build (runda 3, 13.10.2026: poprawka Eksploratora po aktualizacji, zadanie Harmonogramu, przewijanie w Terminalu) jest zbudowany, ale nie zainstalowany.
 - uiScale=auto. Monitor 24B31H 1920×1080 120 Hz. Laptop użytkownika: 1920×1080 przy 150%.
 
 ## Ustalenia i ograniczenia

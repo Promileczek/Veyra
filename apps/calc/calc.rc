@@ -3,8 +3,8 @@
 // Kalkulator: ikona (dock, Alt+Tab, panel aplikacji) + opis programu (nazwa w docku)
 1 ICON "../../res/calculator.ico"
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,1,5,2
-PRODUCTVERSION 1,1,5,2
+FILEVERSION 1,2,0,0
+PRODUCTVERSION 1,2,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -14,7 +14,7 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Kalkulator"
             VALUE "ProductName", "Exploder"
-            VALUE "FileVersion", "1.1.5.2"
+            VALUE "FileVersion", "1.2"
             VALUE "OriginalFilename", "exploder-calc.exe"
         END
     END

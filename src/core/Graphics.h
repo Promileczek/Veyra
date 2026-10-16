@@ -40,6 +40,9 @@ public:
     ID2D1DeviceContext* Context() const { return dc_.Get(); }
     ID2D1DeviceContext* Begin();
     bool End();  // false = urządzenie utracone, trzeba odtworzyć
+    // Animacja pojawienia się (kompozytor, bez przerysowywania): przenikanie z 0, skala z fromScale wokół (cx, cy)
+    // i przesunięcie w pionie z fromDy do 0 — piksele okna, wygasające tempo (ease-out)
+    void Appear(float seconds, float fromScale, float cx, float cy, float fromDy);
 
 private:
     bool CreateTarget();

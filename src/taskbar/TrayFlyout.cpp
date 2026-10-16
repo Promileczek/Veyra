@@ -70,9 +70,12 @@ void TrayFlyout::Toggle(const RECT& anchor, UINT dpi) {
     dpi_ = dpi;
     hover_ = -1;
     Place();
+    Render();
+    RECT wr{};  // wysuwa się z dołu (nad dockiem)
+    GetWindowRect(hwnd_, &wr);
+    surface_.Appear(0.18f, 0.94f, (wr.right - wr.left) / 2.f, static_cast<float>(wr.bottom - wr.top), 10.f * dpi_ / 96.f);
     ShowWindow(hwnd_, SW_SHOW);
     SetForegroundWindow(hwnd_);  // aktywny panel → kliknięcie gdziekolwiek indziej go zamknie
-    Render();
     if (onVisibilityChange_) onVisibilityChange_();
 }
 
@@ -147,6 +150,7 @@ void TrayFlyout::Render() {
             dc->DrawBitmap(bmp, &dst, 1.f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
         }
         std::wstring label = FirstLine(icon.tip);
+        if (label.empty() && icon.owner) label = AppNameForWindow(icon.owner);  // pusta podpowiedź (Discord, BlueStacks…): nazwa programu
         if (label.empty()) label = L"(bez opisu)";
         brush_->SetColor(theme_->text);
         dc->DrawText(label.c_str(), static_cast<UINT32>(label.size()), rowFormat_.Get(),

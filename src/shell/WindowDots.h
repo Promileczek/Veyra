@@ -28,6 +28,7 @@ private:
         float widthDip = 0.f, heightDip = 0.f, scale = 1.f, dy = 0.f;
         bool hover = false, trackingMouse = false, moving = false;
         int resampleTicks = 0;
+        bool sampled = false;  // kolor tła odczytany z okna (nigdy = okno niewidoczne/przezroczyste — bez nakładki)
     };
 
     static void CALLBACK OnEvent(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD, DWORD);

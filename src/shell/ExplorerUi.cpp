@@ -1,4 +1,5 @@
 #include "ExplorerUi.h"
+#include "../core/Settings.h"
 #include <shellapi.h>
 #include <string>
 #include <vector>
@@ -33,7 +34,10 @@ void HideAll() {
         abd.hWnd = tray;
         const LPARAM state = static_cast<LPARAM>(SHAppBarMessage(ABM_GETSTATE, &abd));
         if (!(state & ABS_AUTOHIDE)) {
-            if (g_originalState < 0) g_originalState = state;
+            if (g_originalState < 0) {
+                g_originalState = state;
+                Settings::Set(L"minimalTaskbarState", std::to_wstring(state));  // dla strażnika (RestoreAfterKill)
+            }
             abd.lParam = state | ABS_AUTOHIDE;
             SHAppBarMessage(ABM_SETSTATE, &abd);
         }
@@ -96,9 +100,66 @@ void Restore() {
             SHAppBarMessage(ABM_SETSTATE, &abd);
         });
         g_originalState = -1;
+        Settings::Set(L"minimalTaskbarState", L"");
     }
     for (HWND h : g_hidden)
         if (IsWindow(h)) ShowWindow(h, SW_SHOWNA);
     g_hidden.clear();
+}
+
+void RestoreAfterKill() {
+    Settings::Reload();
+    if (const std::wstring saved = Settings::Get(L"minimalTaskbarState"); !saved.empty()) {
+        const LPARAM state = _wtoi(saved.c_str());
+        ForEachExplorerTaskbar([state](HWND tray) {
+            APPBARDATA abd{sizeof(abd)};
+            abd.hWnd = tray;
+            abd.lParam = state;
+            SHAppBarMessage(ABM_SETSTATE, &abd);
+        });
+        Settings::Set(L"minimalTaskbarState", L"");
+    }
+    ForEachExplorerTaskbar([](HWND tray) {
+        if (!IsWindowVisible(tray)) ShowWindow(tray, SW_SHOWNA);
+    });
+    if (HWND progman = FindWindowW(L"Progman", nullptr); progman && IsExplorerWindow(progman) && !IsWindowVisible(progman))
+        ShowWindow(progman, SW_SHOWNA);
+    // Pulpit z ikonami bywa w WorkerW (po zmianie tapety) — tylko ten z widokiem pulpitu; pozostałe WorkerW chowa sam Eksplorator
+    EnumWindows([](HWND h, LPARAM) -> BOOL {
+        wchar_t cls[16]{};
+        if (GetClassNameW(h, cls, ARRAYSIZE(cls)) && wcscmp(cls, L"WorkerW") == 0 && IsExplorerWindow(h) && !IsWindowVisible(h) &&
+            FindWindowExW(h, nullptr, L"SHELLDLL_DefView", nullptr))
+            ShowWindow(h, SW_SHOWNA);
+        return TRUE;
+    }, 0);
+}
+
+bool IsConfiguredShell() {
+    wchar_t value[1024]{}, self[MAX_PATH]{};
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon", L"Shell", RRF_RT_REG_SZ, nullptr,
+                     value, &size) != ERROR_SUCCESS ||
+        !GetModuleFileNameW(nullptr, self, MAX_PATH))
+        return false;
+    CharLowerW(value);
+    CharLowerW(self);
+    return wcsstr(value, self) != nullptr;
+}
+
+bool CloseExplorerShell() {
+    std::vector<DWORD> pids;
+    HWND h = nullptr;
+    while ((h = FindWindowExW(nullptr, h, L"Shell_TrayWnd", nullptr)) != nullptr) {
+        DWORD pid = 0;
+        if (IsExplorerWindow(h) && GetWindowThreadProcessId(h, &pid)) pids.push_back(pid);
+    }
+    for (DWORD pid : pids) {
+        if (HANDLE p = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid)) {
+            TerminateProcess(p, 1);  // kod 1 (jak taskkill /f) — przy 0 i -1 Windows sam uruchamia Eksplorator ponownie
+            WaitForSingleObject(p, 5000);
+            CloseHandle(p);
+        }
+    }
+    return !pids.empty();
 }
 }  // namespace ExplorerUi

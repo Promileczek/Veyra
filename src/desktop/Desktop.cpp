@@ -1,4 +1,6 @@
 #include "Desktop.h"
+#include "../core/FolderIcon.h"
+#include "../core/Settings.h"
 #include "../core/UiScale.h"
 #include <knownfolders.h>
 #include <shellapi.h>
@@ -97,6 +99,7 @@ bool Desktop::Create(HINSTANCE inst, Graphics& g, std::function<void(ComPtr<IShe
         files_.SetFocused(true);
     };
     launcher_.Load();
+    showStats_ = Settings::GetBool(L"showStats", true);
     stats_.Init(*g_);
     statsHeight_ = stats_.Height();
     files_.Init(*g_, hwnd_, WM_FILES_CHANGED,
@@ -249,7 +252,7 @@ RECT Desktop::IconBounds() const {
         if (dragging && item.selected) add({r.left + dx - 2.f, r.top + dy - 2.f, r.right + dx + 2.f, r.bottom + dy + 2.f});
     }
     add(launcher_.Bounds());
-    add(stats_.Bounds());
+    if (const D2D1_RECT_F s = stats_.Bounds(); s.right > s.left) add(s);
     if (const D2D1_RECT_F f = files_.Bounds(); f.right > f.left) add({f.left - 2.f, f.top - 2.f, f.right + 2.f, f.bottom + 2.f});
     if (mode_ == Mode::Selecting) add({std::min(downPt_.x, curPt_.x) - 1.f, std::min(downPt_.y, curPt_.y) - 1.f,
                                        std::max(downPt_.x, curPt_.x) + 1.f, std::max(downPt_.y, curPt_.y) + 1.f});
@@ -285,7 +288,8 @@ void Desktop::UpdateWorkArea() {
 
     // Statystyki: na prawo od panelu aplikacji
     const float sx = std::min(lx + lw + 20.f, work_.right - 16.f - StatsWidget::kWidth);
-    stats_.SetBounds({sx, launcherTop_, sx + StatsWidget::kWidth, std::min(launcherTop_ + stats_.Height(), work_.bottom - 8.f)});
+    if (showStats_) stats_.SetBounds({sx, launcherTop_, sx + StatsWidget::kWidth, std::min(launcherTop_ + stats_.Height(), work_.bottom - 8.f)});
+    else stats_.SetBounds({});  // panel statystyk wyłączony w Ustawieniach
 
     // Panel "Pliki": domyślnie na lewo od panelu aplikacji (potem tam, gdzie go zostawiono)
     const float fw = 320.f, fx = std::max(work_.left + 16.f, lx - 20.f - fw);
@@ -420,7 +424,7 @@ void Desktop::Render() {
     dc->Clear(D2D1::ColorF(0, 0, 0, 0));
     launcher_.Draw(dc, brush_.Get(), static_cast<float>(dpi_));
     files_.Draw(dc, brush_.Get(), static_cast<float>(dpi_));
-    stats_.Draw(dc, brush_.Get());
+    if (showStats_) stats_.Draw(dc, brush_.Get());
     for (size_t i = 0; i < items_.size(); ++i) {
         DesktopItem& item = items_[i];
         const bool moving = dragging && item.selected;
@@ -439,7 +443,10 @@ void Desktop::Render() {
         }
 
         const float cx = (r.left + r.right) / 2, top = r.top + 4.f;
-        if (ID2D1Bitmap* icon = IconFor(item)) {
+        if (item.folder) {  // folder: własna ikona Veyry
+            brush_->SetColor(D2D1::ColorF(1.f, 1.f, 1.f, moving ? 0.75f : 1.f));  // (kolor nadpisywany w DrawVeyraFolder)
+            DrawVeyraFolder(dc, brush_.Get(), {cx - kIcon / 2, top, cx + kIcon / 2, top + kIcon});
+        } else if (ID2D1Bitmap* icon = IconFor(item)) {
             // miniatury bywają prostokątne — wpisujemy w kwadrat z zachowaniem proporcji
             const D2D1_SIZE_F sz = icon->GetSize();
             const float k = std::min(kIcon / sz.width, kIcon / sz.height);
@@ -771,6 +778,16 @@ LRESULT CALLBACK Desktop::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT Desktop::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == Settings::ChangedMessage()) {  // np. włączenie/wyłączenie panelu statystyk
+        Settings::Reload();
+        if (const bool s = Settings::GetBool(L"showStats", true); s != showStats_) {
+            showStats_ = s;
+            UpdateWorkArea();
+            DrawWallpaper();
+            RequestRedraw();
+        }
+        return 0;
+    }
     if (msg == UiScale::ChangedMessage()) msg = WM_DISPLAYCHANGE;  // nowa skala Veyry: jak zmiana ekranu
     if (LRESULT r = 0; files_.View().HandleMenuMessage(msg, wp, lp, r)) return r;
     if (activeMenu_ && (msg == WM_INITMENUPOPUP || msg == WM_DRAWITEM || msg == WM_MEASUREITEM)) {
@@ -837,6 +854,7 @@ LRESULT Desktop::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_TIMER:
         if (wp == kStatsTimer) {
+            if (!showStats_) return 0;
             stats_.Sample();
             if (const float h = stats_.Height(); h != statsHeight_) {  // nowa aplikacja na liście → panel wyższy
                 statsHeight_ = h;

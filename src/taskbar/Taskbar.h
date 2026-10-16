@@ -14,6 +14,14 @@
 #include <unordered_map>
 #include <vector>
 
+// Grupa okien tego samego programu — jedna ikona w docku, kilka kropek pod nią; klik cykluje między oknami.
+struct DockGroup {
+    std::wstring key;              // nazwa programu (grupowanie)
+    std::vector<HWND> windows;     // w kolejności z trackera
+    bool active = false;           // któreś okno na pierwszym planie
+    bool flashing = false;
+};
+
 // Pasek zadań: AppBar na dolnej krawędzi monitora głównego, przyciski okien, zegar.
 // Dwa style (Theme.h): pełny pasek (Win11) albo pływający dock (macOS).
 class Taskbar {
@@ -46,8 +54,10 @@ private:
     void ToggleTrayFlyout();
     void ToggleStartMenu();
     void DrawGlass(ID2D1DeviceContext* dc, const D2D1_ROUNDED_RECT& shape);
+    void DrawVeyraLogo(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, const D2D1_COLOR_F& color);  // logo „V” w docku
     static LRESULT CALLBACK WinKeyHook(int code, WPARAM wp, LPARAM lp);
     void ToggleDesktop();
+    bool IconRectFor(HWND h, RECT* out) const;  // ikona okna w docku (piksele ekranu) — dla WindowAnim
     void UpdateTooltip();
     void HideMinimizedWindows(bool hide);
     static void ParkMinimized(HWND h);
@@ -62,7 +72,10 @@ private:
     void OnRightClick(int hit);
     void Quit(bool startExplorer);
     const AppIcon& IconFor(const TrackedWindow& w) const;
+    const AppIcon& IconForHwnd(HWND h) const;
     void PrepareIcons();  // przed rysowaniem — ResolveAppIcon woła powłokę, która przetwarza komunikaty
+    void BuildGroups();   // grupuje okna tego samego programu w jedną ikonę docka
+    HWND GroupActivate(const struct DockGroup& g) const;  // okno do pokazania przy kliknięciu (cykl)
     void Fill(const D2D1_RECT_F& r, const D2D1_COLOR_F& c, float radius = 0.f);
 
     HWND hwnd_ = nullptr;
@@ -104,7 +117,8 @@ private:
     D2D1_RECT_F startRect_{};
     D2D1_RECT_F clockRect_{};
     D2D1_RECT_F dividerRect_{};
-    std::vector<D2D1_RECT_F> buttonRects_;
+    std::vector<DockGroup> groups_;
+    std::vector<D2D1_RECT_F> buttonRects_;  // jeden na grupę (groups_)
     D2D1_RECT_F trayRect_{};  // przycisk "Tray" (pusty, gdy zasobnik nieaktywny)
 
     ComPtr<ID2D1SolidColorBrush> brush_;

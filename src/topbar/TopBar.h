@@ -1,11 +1,13 @@
 #pragma once
 #include "../core/Graphics.h"
 #include "../shell/MediaService.h"
+#include "../shell/Notification.h"
 #include "../shell/SystemStatus.h"
 #include "../taskbar/Theme.h"
 #include "StatusPopups.h"
 
 // Górny pasek (pływający, szklany): sieć po lewej, "teraz odtwarzane" na środku, głośność po prawej.
+// Laptop (bateria): obok głośności stan baterii; powiadomienia przy 15/10/5% i po naładowaniu do pełna.
 class TopBar {
 public:
     bool Create(HINSTANCE inst, Graphics& g);
@@ -29,6 +31,8 @@ private:
     RECT ScreenRect(const D2D1_RECT_F& r) const;
     void Glyph(wchar_t glyph, const D2D1_RECT_F& r, const D2D1_COLOR_F& color);
     void Text(const std::wstring& text, IDWriteTextFormat* format, const D2D1_RECT_F& r, const D2D1_COLOR_F& color);
+    void UpdateBattery();  // co 5 s: stan baterii, powiadomienia
+    void DrawBattery(ID2D1DeviceContext* dc);
 
     HWND hwnd_ = nullptr;
     Graphics* g_ = nullptr;
@@ -47,6 +51,9 @@ private:
     VolumeControl volume_;
     VolumePopup volumePopup_;
     NetworkPopup networkPopup_;
+    Notification batteryToast_;
+    bool hasBattery_ = false, charging_ = false, fullNotified_ = false;
+    int batteryPercent_ = -1, lastWarning_ = 101;  // ostatni próg ostrzeżenia (15/10/5), 101 = żaden
 
     UINT dpi_ = 96;
     float widthDip_ = 0.f, heightDip_ = 0.f;
@@ -57,5 +64,5 @@ private:
     bool hiddenForFullscreen_ = false;
 
     D2D1_RECT_F netRect_{}, mediaRect_{}, coverRect_{}, titleRect_{}, prevRect_{}, playRect_{}, nextRect_{},
-        progressRect_{}, volumeRect_{};
+        progressRect_{}, volumeRect_{}, batteryRect_{};
 };

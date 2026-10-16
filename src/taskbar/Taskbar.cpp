@@ -7,6 +7,7 @@
 #include "../core/WorkArea.h"
 #include "../desktop/DesktopItems.h"
 #include "../files/FileWindow.h"
+#include "../shell/WindowAnim.h"
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <shellapi.h>
@@ -28,7 +29,7 @@ constexpr float kDividerWidth = 13.f;                // separator przed zasobnik
 constexpr float kTrayButton = 56.f;
 constexpr wchar_t kClassName[] = L"ExploderTaskbar";
 
-enum MenuCmd { CmdCloseWindow = 1, CmdExplorer, CmdTaskMgr, CmdQuit, CmdWindowDots };
+enum MenuCmd { CmdCloseWindow = 1, CmdExplorer, CmdTaskMgr, CmdQuit, CmdWindowDots, CmdCloseAll };
 
 bool Contains(const D2D1_RECT_F& r, float x, float y) {
     return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
@@ -56,6 +57,7 @@ bool Taskbar::Create(HINSTANCE inst, Graphics& g) {
     if (!CreateDeviceResources()) return false;
 
     tracker_.Start(hwnd_, [this] { RequestRedraw(); });
+    WindowAnim::Install([this](HWND h, RECT* out) { return IconRectFor(h, out); });
     // Zasobnik tylko gdy jesteśmy powłoką (explorer.exe nie działa). Wtedy AppBar też nie działa
     // (obsługuje go explorer), więc obszar roboczy ustawiamy sami — ApplyWorkArea.
     tray_.Start(inst, [this] {
@@ -207,10 +209,28 @@ void Taskbar::ScheduleClock() {
     SetTimer(hwnd_, kClockTimer, ms, nullptr);
 }
 
-void Taskbar::Layout() {
+// Grupuje okna tego samego programu (po nazwie z exe). Okna bez nazwy — każde osobno.
+void Taskbar::BuildGroups() {
     auto& wins = tracker_.Windows();
-    const float count = static_cast<float>(wins.size() + 1);  // + przycisk Start
-    buttonRects_.resize(wins.size());
+    groups_.clear();
+    for (const TrackedWindow& w : wins) {
+        std::wstring key = IconForHwnd(w.hwnd).appName;
+        if (key.empty()) key = AppNameForWindow(w.hwnd);
+        if (key.empty()) key = L"#" + std::to_wstring(reinterpret_cast<uintptr_t>(w.hwnd));
+        DockGroup* g = nullptr;
+        for (DockGroup& e : groups_)
+            if (e.key == key) { g = &e; break; }
+        if (!g) { groups_.push_back({key, {}, false, false}); g = &groups_.back(); }
+        g->windows.push_back(w.hwnd);
+        if (tracker_.IsActive(w.hwnd)) g->active = true;
+        if (w.flashing) g->flashing = true;
+    }
+}
+
+void Taskbar::Layout() {
+    BuildGroups();
+    const float count = static_cast<float>(groups_.size() + 1);  // + przycisk Start
+    buttonRects_.resize(groups_.size());
 
     const float trayW = TrayWidthDip();
 
@@ -256,6 +276,7 @@ void Taskbar::Layout() {
             r = {x, y, x + bw, y + bh};
         }
     }
+    const auto& wins = tracker_.Windows();
     std::erase_if(icons_, [&](const auto& kv) {
         return std::none_of(wins.begin(), wins.end(), [&](const TrackedWindow& w) { return w.hwnd == kv.first; });
     });
@@ -269,10 +290,52 @@ void Taskbar::Fill(const D2D1_RECT_F& r, const D2D1_COLOR_F& c, float radius) {
         surface_.Context()->FillRectangle(r, brush_.Get());
 }
 
-const AppIcon& Taskbar::IconFor(const TrackedWindow& w) const {
+// Logo Veyry: pełne „V” (klin) w akcentowym kafelku (żeby przycisk nie wyglądał jak ikona aplikacji).
+void Taskbar::DrawVeyraLogo(ID2D1DeviceContext* dc, const D2D1_RECT_F& r, const D2D1_COLOR_F& color) {
+    const float cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
+    const float side = std::min(iconSize_, std::min(r.right - r.left, r.bottom - r.top));
+    // Kafelek: zaokrąglony kwadrat z akcentu, z cieńszą obwódką — wyraźny „przycisk Veyry”
+    const D2D1_RECT_F chip{cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2};
+    brush_->SetColor(D2D1::ColorF(color.r, color.g, color.b, 0.16f));
+    dc->FillRoundedRectangle(D2D1::RoundedRect(chip, side * 0.26f, side * 0.26f), brush_.Get());
+    brush_->SetColor(D2D1::ColorF(color.r, color.g, color.b, 0.55f));
+    dc->DrawRoundedRectangle(D2D1::RoundedRect({chip.left + 0.5f, chip.top + 0.5f, chip.right - 0.5f, chip.bottom - 0.5f}, side * 0.26f, side * 0.26f),
+                             brush_.Get(), 96.f / dpi_);
+    const float hx = side * 0.30f, hy = side * 0.31f;
+    const D2D1_POINT_2F p[] = {{cx - hx, cy - hy}, {cx - 0.27f * hx, cy - hy}, {cx, cy + 0.30f * hy},
+                               {cx + 0.27f * hx, cy - hy}, {cx + hx, cy - hy}, {cx, cy + hy}};
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> v;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(&v)) || FAILED(v->Open(&sink))) return;
+    sink->BeginFigure(p[0], D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(p[1]);
+    sink->AddLine(p[2]);
+    sink->AddLine(p[3]);
+    sink->AddLine(p[4]);
+    sink->AddLine(p[5]);
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    brush_->SetColor(color);
+    dc->FillGeometry(v.Get(), brush_.Get());
+}
+
+const AppIcon& Taskbar::IconFor(const TrackedWindow& w) const { return IconForHwnd(w.hwnd); }
+const AppIcon& Taskbar::IconForHwnd(HWND h) const {
     static const AppIcon empty;
-    auto it = icons_.find(w.hwnd);
+    auto it = icons_.find(h);
     return it != icons_.end() ? it->second : empty;
+}
+
+// Okno do pokazania przy kliknięciu w grupę: jeśli któreś jest na pierwszym planie — następne (cykl), inaczej pierwsze.
+HWND Taskbar::GroupActivate(const DockGroup& g) const {
+    if (g.windows.empty()) return nullptr;
+    int cur = -1;
+    for (size_t i = 0; i < g.windows.size(); ++i)
+        if (tracker_.IsActive(g.windows[i])) cur = static_cast<int>(i);
+    if (cur < 0) return g.windows[0];
+    return g.windows[(cur + 1) % g.windows.size()];
 }
 
 void Taskbar::PrepareIcons() {
@@ -319,28 +382,20 @@ void Taskbar::Render() {
         Fill({0, 0, W, px}, theme_.border);  // 1 px linii u góry
     }
 
-    // Start (na razie tylko logo)
+    // Start: logo Veyry (pełne „V” w akcencie)
     if (hover_ == kStart) Fill(startRect_, pressed_ == kStart ? theme_.pressed : theme_.hover, hoverRadius);
-    {
-        const float sq = iconSize_ / 3.f, gp = sq * 0.19f;
-        const float cx = (startRect_.left + startRect_.right) / 2, cy = (startRect_.top + startRect_.bottom) / 2;
-        for (int i = 0; i < 4; ++i) {
-            const float x = cx - sq - gp / 2 + (i % 2) * (sq + gp);
-            const float y = cy - sq - gp / 2 + (i / 2) * (sq + gp);
-            Fill({x, y, x + sq, y + sq}, theme_.accent, sq * 0.2f);
-        }
-    }
+    DrawVeyraLogo(dc, startRect_, theme_.accent);
 
-    // Okna
-    auto& wins = tracker_.Windows();
-    for (size_t i = 0; i < wins.size() && i < buttonRects_.size(); ++i) {
-        TrackedWindow& w = wins[i];
+    // Okna — zgrupowane po programie (jedna ikona, kilka kropek = liczba okien)
+    for (size_t i = 0; i < groups_.size() && i < buttonRects_.size(); ++i) {
+        const DockGroup& grp = groups_[i];
         const D2D1_RECT_F& r = buttonRects_[i];
         const int id = static_cast<int>(i);
-        const bool active = tracker_.IsActive(w.hwnd);
+        const bool active = grp.active;
+        const int n = static_cast<int>(grp.windows.size());
 
         const D2D1_COLOR_F* bg = nullptr;
-        if (w.flashing) bg = &theme_.flash;
+        if (grp.flashing) bg = &theme_.flash;
         else if (pressed_ == id && !dock) bg = &theme_.pressed;
         else if (hover_ == id) bg = active && !dock ? &theme_.hoverActive : &theme_.hover;
         else if (active && !dock) bg = &theme_.activeBg;
@@ -348,7 +403,7 @@ void Taskbar::Render() {
 
         const float cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2 - 1.f;
         {
-            const AppIcon& icon = IconFor(w);
+            const AppIcon& icon = IconForHwnd(grp.windows[0]);  // ten sam program = ta sama ikona
             const float s = std::min(iconSize_, r.right - r.left - 4.f);
             const D2D1_RECT_F dst{cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2};
             const float opacity = dock && pressed_ == id ? 0.6f : 1.f;  // macOS: wciśnięta ikona ciemnieje
@@ -357,11 +412,16 @@ void Taskbar::Render() {
             else if (icon.bitmap)
                 dc->DrawBitmap(icon.bitmap.Get(), &dst, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
         }
-        if (dock) {  // kropka pod uruchomioną aplikacją; aktywne okno — jaśniejsza
-            brush_->SetColor(active ? theme_.dockDot : theme_.indicator);
-            dc->FillEllipse(D2D1::Ellipse({cx, H - 3.5f}, 2.f, 2.f), brush_.Get());
+        // Wskaźnik: kropki = liczba okien (max 4); aktywna grupa — jaśniejsze
+        const int dots = std::min(n, 4);
+        if (dock) {
+            const float gap = 6.f, totalW = (dots - 1) * gap;
+            for (int d = 0; d < dots; ++d) {
+                brush_->SetColor(active ? theme_.dockDot : theme_.indicator);
+                dc->FillEllipse(D2D1::Ellipse({cx - totalW / 2 + d * gap, H - 3.5f}, 2.f, 2.f), brush_.Get());
+            }
         } else {
-            const float iw = active ? 16.f : 6.f;
+            const float iw = active ? 16.f : (n > 1 ? 6.f + (dots - 1) * 5.f : 6.f);
             Fill({cx - iw / 2, r.bottom - 3.f, cx + iw / 2, r.bottom}, active ? theme_.accent : theme_.indicator, 1.5f);
         }
     }
@@ -501,12 +561,17 @@ void Taskbar::OnClick(int hit) {
         ToggleStartMenu();
         return;
     }
-    auto& wins = tracker_.Windows();
-    if (hit < 0 || hit >= static_cast<int>(wins.size())) return;
-    const HWND h = wins[static_cast<size_t>(hit)].hwnd;
+    if (hit < 0 || hit >= static_cast<int>(groups_.size())) return;
+    const DockGroup& g = groups_[static_cast<size_t>(hit)];
+    if (g.windows.size() > 1) {  // grupa: cykl między oknami programu
+        const HWND h = GroupActivate(g);
+        if (IsIconic(h)) WindowAnim::Restore({h}, true);
+        else if (!SetForegroundWindow(h)) SwitchToThisWindow(h, TRUE);
+        return;
+    }
+    const HWND h = g.windows[0];
     if (IsIconic(h)) {
-        ShowWindowAsync(h, SW_RESTORE);
-        SetForegroundWindow(h);
+        WindowAnim::Restore({h}, true);
     } else if (tracker_.IsActive(h)) {
         ShowWindowAsync(h, SW_MINIMIZE);
     } else if (!SetForegroundWindow(h)) {
@@ -518,7 +583,7 @@ void Taskbar::OnClick(int hit) {
 void Taskbar::ToggleDesktop() {
     std::erase_if(hiddenByStart_, [](HWND h) { return !IsWindow(h) || !IsIconic(h); });
     if (!hiddenByStart_.empty()) {
-        for (auto it = hiddenByStart_.rbegin(); it != hiddenByStart_.rend(); ++it) ShowWindowAsync(*it, SW_RESTORE);
+        WindowAnim::Restore({hiddenByStart_.rbegin(), hiddenByStart_.rend()}, false);
         hiddenByStart_.clear();
         return;
     }
@@ -530,15 +595,39 @@ void Taskbar::ToggleDesktop() {
     if (HWND desktop = GetShellWindow()) SetForegroundWindow(desktop);  // pisanie od razu trafia do wyszukiwarki
 }
 
+// Ikona okna w docku (piksele ekranu) — cel animacji minimalizowania
+bool Taskbar::IconRectFor(HWND h, RECT* out) const {
+    if (!IsWindowVisible(hwnd_) || hiddenForFullscreen_) return false;
+    for (size_t i = 0; i < groups_.size() && i < buttonRects_.size(); ++i) {
+        if (std::find(groups_[i].windows.begin(), groups_[i].windows.end(), h) == groups_[i].windows.end()) continue;
+        const D2D1_RECT_F& r = buttonRects_[i];
+        const float side = std::min(iconSize_, r.right - r.left - 4.f);
+        const float cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2 - 1.f;
+        RECT win{};
+        GetWindowRect(hwnd_, &win);
+        const float s = dpi_ / 96.f;
+        *out = {win.left + static_cast<LONG>((cx - side / 2) * s), win.top + static_cast<LONG>((cy - side / 2) * s),
+                win.left + static_cast<LONG>((cx + side / 2) * s), win.top + static_cast<LONG>((cy + side / 2) * s)};
+        return true;
+    }
+    return false;
+}
+
 // Dymek nad ikoną (jak w macOS): nazwa programu + tytuł okna.
 void Taskbar::UpdateTooltip() {
     std::wstring title, subtitle;
     D2D1_RECT_F r{};
-    auto& wins = tracker_.Windows();
-    if (hover_ >= 0 && hover_ < static_cast<int>(wins.size()) && hover_ < static_cast<int>(buttonRects_.size())) {
-        TrackedWindow& w = wins[static_cast<size_t>(hover_)];
-        title = IconFor(w).appName;
-        subtitle = w.title;
+    if (hover_ >= 0 && hover_ < static_cast<int>(groups_.size()) && hover_ < static_cast<int>(buttonRects_.size())) {
+        const DockGroup& g = groups_[static_cast<size_t>(hover_)];
+        title = IconForHwnd(g.windows[0]).appName;
+        if (title.empty()) title = g.key;
+        if (g.windows.size() > 1) {
+            subtitle = std::to_wstring(g.windows.size()) + L" okna";  // „N okien”
+        } else {
+            wchar_t t[256]{};
+            GetWindowTextW(g.windows[0], t, ARRAYSIZE(t));
+            subtitle = t;
+        }
         if (title.empty()) std::swap(title, subtitle);
         r = buttonRects_[static_cast<size_t>(hover_)];
     } else if (hover_ == kStart) {
@@ -564,13 +653,15 @@ void Taskbar::UpdateTooltip() {
 }
 
 void Taskbar::OnRightClick(int hit) {
-    auto& wins = tracker_.Windows();
-    const bool onWindow = hit >= 0 && hit < static_cast<int>(wins.size());
-    const HWND target = onWindow ? wins[static_cast<size_t>(hit)].hwnd : nullptr;
+    const bool onWindow = hit >= 0 && hit < static_cast<int>(groups_.size());
+    const DockGroup* grp = onWindow ? &groups_[static_cast<size_t>(hit)] : nullptr;
+    const HWND target = grp ? GroupActivate(*grp) : nullptr;  // aktywne okno grupy
+    const bool many = grp && grp->windows.size() > 1;
 
     HMENU menu = CreatePopupMenu();
     if (onWindow) {
-        AppendMenuW(menu, MF_STRING, CmdCloseWindow, L"Zamknij okno");
+        AppendMenuW(menu, MF_STRING, CmdCloseWindow, many ? L"Zamknij aktywne okno" : L"Zamknij okno");
+        if (many) AppendMenuW(menu, MF_STRING, CmdCloseAll, L"Zamknij wszystkie okna");
     } else {
         AppendMenuW(menu, MF_STRING, CmdTaskMgr, L"Menedżer zadań");
         if (dotsOn_) AppendMenuW(menu, MF_STRING | (dotsOn_() ? MF_CHECKED : 0), CmdWindowDots, L"Kropki macOS w oknach");
@@ -587,6 +678,10 @@ void Taskbar::OnRightClick(int hit) {
 
     switch (cmd) {
     case CmdCloseWindow: PostMessageW(target, WM_CLOSE, 0, 0); break;
+    case CmdCloseAll:
+        if (grp)
+            for (HWND w : grp->windows) PostMessageW(w, WM_CLOSE, 0, 0);
+        break;
     case CmdWindowDots:
         if (setDots_ && dotsOn_) setDots_(!dotsOn_());
         break;
@@ -806,6 +901,7 @@ LRESULT Taskbar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         if (winKeyHook_) UnhookWindowsHookEx(winKeyHook_);
         winKeyHook_ = nullptr;
         g_taskbar = nullptr;
+        WindowAnim::Uninstall();
         tracker_.Stop();
         HideMinimizedWindows(false);
         if (minimizeHook_) UnhookWinEvent(minimizeHook_);

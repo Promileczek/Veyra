@@ -14,7 +14,7 @@ constexpr UINT_PTR kResampleTimer = 1;
 WindowDots* g_instance = nullptr;
 
 // Rodzaj okna: zwykłe (przyciski od DWM) albo Chromium/Electron z własnym paskiem tytułu
-enum class Kind { None, Standard, Browser, Discord };
+enum class Kind { None, Standard, Browser, Discord, Electron };
 
 std::wstring ExeName(HWND h) {
     DWORD pid = 0;
@@ -40,7 +40,14 @@ Kind KindOf(HWND h) {
         if (exe == L"brave.exe" || exe == L"chrome.exe" || exe == L"msedge.exe" || exe == L"opera.exe" || exe == L"vivaldi.exe")
             return Kind::Browser;
         if (exe == L"discord.exe") return Kind::Discord;
-        return Kind::None;  // nieznany układ przycisków — nie zgadujemy
+        const LONG_PTR style = GetWindowLongPtrW(h, GWL_STYLE);
+        // Electron z natywną ramką — przyciski od DWM, jak w zwykłym oknie
+        if ((style & WS_SYSMENU) && (style & WS_CAPTION) == WS_CAPTION) return Kind::Standard;
+        // Bez ramki, własne przyciski w prawym górnym rogu (Spotify, VS Code…): tylko okno główne z minimalizacją
+        // (nie dymki, menu ani okna podrzędne)
+        if ((style & WS_MINIMIZEBOX) && !(GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) && !GetWindow(h, GW_OWNER))
+            return Kind::Electron;
+        return Kind::None;
     }
     const LONG_PTR style = GetWindowLongPtrW(h, GWL_STYLE);
     return (style & WS_SYSMENU) && (style & WS_CAPTION) == WS_CAPTION ? Kind::Standard : Kind::None;
@@ -98,6 +105,7 @@ void WindowDots::Periodic() {
     float scale = 1.f;
     for (auto& o : overlays_)
         if (!o->moving && !IsWindowVisible(o->hwnd) && ButtonArea(o->target, area, scale)) Update(*o);
+    Restack();  // okno mogło wyjść nad nakładkę bez zmiany aktywnego okna (kropki „znikały”)
 }
 
 void WindowDots::Uninstall() {
@@ -229,11 +237,21 @@ bool WindowDots::ButtonArea(HWND t, RECT& out, float& scale, float* dy) const {
     const float s = GetDpiForWindow(t) / 96.f;
     RECT frame{};  // widoczne granice okna (bez niewidzialnej ramki do zmiany rozmiaru)
     if (FAILED(DwmGetWindowAttribute(t, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame)))) GetWindowRect(t, &frame);
+    // Okna-widma: maleńkie, poza ekranami albo w pełni przezroczyste (puste czarne nakładki w rogach ekranu)
+    if (frame.right - frame.left < 160 * s || frame.bottom - frame.top < 80 * s || !MonitorFromRect(&frame, MONITOR_DEFAULTTONULL)) return false;
+    BYTE alpha = 255;
+    DWORD layered = 0;
+    if ((GetWindowLongPtrW(t, GWL_EXSTYLE) & WS_EX_LAYERED) && GetLayeredWindowAttributes(t, nullptr, &alpha, &layered) &&
+        (layered & LWA_ALPHA) && alpha < 32)
+        return false;
 
     const Kind kind = KindOf(t);
-    if (kind == Kind::Browser || kind == Kind::Discord) {
-        // Brave/Chrome: 3 przyciski 45×29 DIP; Discord (zmierzone): 36×32 DIP
-        const float bw = kind == Kind::Browser ? 3 * 45.f : 3 * 36.f, bh = kind == Kind::Browser ? 29.f : 32.f;
+    if (kind == Kind::Browser || kind == Kind::Discord || kind == Kind::Electron) {
+        // Brave/Chrome: 3 przyciski 45×29 DIP; Discord (zmierzone): 36×32 DIP; Electron: 46 DIP szerokości jak w Windows,
+        // wysokość VS Code (zmierzone) 35 DIP, pozostałe 32 DIP
+        const float ew = 3 * 46.f, eh = kind == Kind::Electron && ExeName(t) == L"code.exe" ? 35.f : 32.f;
+        const float bw = kind == Kind::Browser ? 3 * 45.f : kind == Kind::Discord ? 3 * 36.f : ew;
+        const float bh = kind == Kind::Browser ? 29.f : kind == Kind::Discord ? 32.f : eh;
         scale = kind == Kind::Browser ? 1.3f : 1.f;
         if (dy && kind == Kind::Browser) *dy = 4.f;
         out = {frame.right - static_cast<LONG>(bw * s), frame.top, frame.right, frame.top + static_cast<LONG>(bh * s)};
@@ -271,6 +289,7 @@ bool WindowDots::SampleBackground(Overlay& o, const RECT& area) {
         if (n > best) best = n, c = a;
     }
     if (c == CLR_INVALID) return false;
+    o.sampled = true;
     const D2D1_COLOR_F next = D2D1::ColorF(GetRValue(c) / 255.f, GetGValue(c) / 255.f, GetBValue(c) / 255.f, 1.f);
     const bool changed = next.r != o.background.r || next.g != o.background.g || next.b != o.background.b;
     o.background = next;
@@ -291,6 +310,9 @@ void WindowDots::Update(Overlay& o) {
     o.scale = scale;
     o.dpi = GetDpiForWindow(o.target);
     SampleBackground(o, area);
+    // W tym miejscu nigdy nie było widać okna (przezroczyste, poza ekranem, schowane pod innymi) — bez pustej nakładki;
+    // co 1,5 s próba od nowa (Periodic)
+    if (!o.sampled) return Hide(o);
     if ((GetWindowLongPtrW(o.hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) && !(GetWindowLongPtrW(o.target, GWL_EXSTYLE) & WS_EX_TOPMOST))
         SetWindowPos(o.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     const HWND after = InsertAfterFor(o.target, o.hwnd);

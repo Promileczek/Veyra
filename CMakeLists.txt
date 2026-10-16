@@ -25,11 +25,14 @@ add_executable(exploder WIN32
     src/shell/WindowTracker.cpp
     src/shell/TrayService.cpp
     src/shell/MediaService.cpp
+    src/shell/NowPlayingHost.cpp
+    src/shell/WindowAnim.cpp
     src/shell/SystemStatus.cpp
     src/shell/ScreenSnip.cpp
     src/shell/SystemStats.cpp
     src/shell/AltTab.cpp
     src/shell/WindowDots.cpp
+    src/shell/VeyraCursor.cpp
     src/shell/ExplorerUi.cpp
     src/shell/Notification.cpp
     src/taskbar/Taskbar.cpp
@@ -63,19 +66,24 @@ add_custom_command(TARGET exploder POST_BUILD
 
 # Aplikacje Explodera (osobne procesy — awaria jednej nie kładzie powłoki; RAM tylko gdy otwarte)
 set(EXPLODER_APP_CORE src/core/Graphics.cpp src/core/Accent.cpp src/core/AppWindow.cpp src/core/TrafficLights.cpp src/core/Settings.cpp src/app.manifest)
-foreach(app terminal calc store settings)
+foreach(app terminal calc store settings taskmgr)
     if(app STREQUAL "terminal")
         set(src apps/terminal/Terminal.cpp)
     elseif(app STREQUAL "calc")
         set(src apps/calc/Calculator.cpp)
     elseif(app STREQUAL "settings")
         set(src apps/settings/SettingsApp.cpp)
+    elseif(app STREQUAL "taskmgr")
+        set(src apps/taskmgr/TaskManager.cpp)
     else()
         set(src apps/store/Store.cpp)
     endif()
     add_executable(exploder-${app} WIN32 ${src} apps/${app}/${app}.rc ${EXPLODER_APP_CORE})
     target_compile_options(exploder-${app} PRIVATE /W4 /utf-8 /permissive- /Zi)
     target_link_libraries(exploder-${app} PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi user32 ole32 shell32 dxguid advapi32 shlwapi winhttp)
+    if(app STREQUAL "taskmgr")
+        target_link_libraries(exploder-${app} PRIVATE psapi iphlpapi)
+    endif()
     target_link_options(exploder-${app} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
 endforeach()
 
@@ -86,11 +94,13 @@ set(SETUP_FILES
     I_TERMINAL ${CMAKE_BINARY_DIR}/exploder-terminal.exe
     I_CALC ${CMAKE_BINARY_DIR}/exploder-calc.exe
     I_STORE ${CMAKE_BINARY_DIR}/exploder-store.exe
+    I_TASKMGR ${CMAKE_BINARY_DIR}/exploder-taskmgr.exe
     I_SETTINGS ${CMAKE_BINARY_DIR}/exploder-settings.exe
     I_WP_DOMYSLNA ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-domyslna.jpg
     I_WP_JEZIORO ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-jezioro.jpg
     I_WP_GORY ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-gory.jpg
-    I_WP_ZORZA ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-zorza.jpg)
+    I_WP_ZORZA ${CMAKE_SOURCE_DIR}/res/wallpapers/veyra-zorza.jpg
+    I_ZADANIE ${CMAKE_SOURCE_DIR}/apps/setup/veyra-zadanie.ps1)
 set(SETUP_RC "")
 set(SETUP_DEPENDS "")
 list(LENGTH SETUP_FILES n)
@@ -106,6 +116,6 @@ file(GENERATE OUTPUT ${SETUP_PAYLOAD} CONTENT "${SETUP_RC}")
 set_source_files_properties(${SETUP_PAYLOAD} PROPERTIES GENERATED TRUE OBJECT_DEPENDS "${SETUP_DEPENDS}")
 add_executable(veyra-setup WIN32 apps/setup/Setup.cpp apps/setup/setup.rc ${SETUP_PAYLOAD} ${EXPLODER_APP_CORE})
 set_target_properties(veyra-setup PROPERTIES OUTPUT_NAME VeyraSetup)
-add_dependencies(veyra-setup exploder exploder-terminal exploder-calc exploder-store exploder-settings)
+add_dependencies(veyra-setup exploder exploder-terminal exploder-calc exploder-store exploder-taskmgr exploder-settings)
 target_compile_options(veyra-setup PRIVATE /W4 /utf-8 /permissive-)
 target_link_libraries(veyra-setup PRIVATE d3d11 dxgi d2d1 dwrite dcomp windowscodecs dwmapi user32 ole32 shell32 dxguid advapi32 shlwapi winhttp)

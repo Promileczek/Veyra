@@ -168,7 +168,13 @@ void AltTab::Layout() {
         const float y = kPad + static_cast<float>(i / columns_) * (kCardH + kGap);
         c.rect = {x, y, x + kCardW, y + kCardH};
         // Także zminimalizowane: DWM trzyma ich ostatni obraz w pełnym rozmiarze. Gdy go nie ma (rozmiar paska
-        // zminimalizowanego okna) — duża ikona zamiast podglądu.
+        // zminimalizowanego okna) — duża ikona zamiast podglądu. Chromium/Electron (Brave, Chrome, Discord…) po
+        // zminimalizowaniu zwalnia obraz okna — DWM pokazuje wtedy ciemny prostokąt, więc też ikona.
+        if (IsIconic(c.hwnd)) {
+            wchar_t cls[32]{};
+            GetClassNameW(c.hwnd, cls, ARRAYSIZE(cls));
+            if (wcsncmp(cls, L"Chrome_WidgetWin_", 17) == 0) continue;
+        }
         if (FAILED(DwmRegisterThumbnail(hwnd_, c.hwnd, &c.thumb))) continue;
         SIZE src{};
         DwmQueryThumbnailSourceSize(c.thumb, &src);

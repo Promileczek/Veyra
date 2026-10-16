@@ -1,4 +1,5 @@
 #include "FileView.h"
+#include "../core/FolderIcon.h"
 #include "../desktop/DesktopItems.h"
 #include <knownfolders.h>
 #include <shellapi.h>
@@ -192,10 +193,12 @@ void FileView::SetBounds(const D2D1_RECT_F& r) {
 }
 
 int FileView::Columns() const { return std::max(1, static_cast<int>((bounds_.right - bounds_.left - 2 * kPad) / kCellW)); }
+// Siatka na środku — ten sam margines z lewej i z prawej
+float FileView::GridLeft() const { return bounds_.left + std::max(kPad, (bounds_.right - bounds_.left - Columns() * kCellW) / 2.f); }
 
 D2D1_RECT_F FileView::CellRect(size_t index) const {
     const int cols = Columns();
-    const float x = bounds_.left + kPad + static_cast<float>(index % cols) * kCellW;
+    const float x = GridLeft() + static_cast<float>(index % cols) * kCellW;
     const float y = bounds_.top + kPad + static_cast<float>(index / cols) * kCellH - scroll_;
     return {x, y, x + kCellW, y + kCellH};
 }
@@ -213,9 +216,9 @@ void FileView::ClampScroll() {
 int FileView::ItemAt(D2D1_POINT_2F p) const {
     if (p.x < bounds_.left || p.x >= bounds_.right || p.y < bounds_.top || p.y >= bounds_.bottom) return -1;
     const int cols = Columns();
-    const int col = static_cast<int>((p.x - bounds_.left - kPad) / kCellW);
+    const int col = static_cast<int>((p.x - GridLeft()) / kCellW);
     const int row = static_cast<int>((p.y - bounds_.top - kPad + scroll_) / kCellH);
-    if (col < 0 || col >= cols || row < 0 || p.x < bounds_.left + kPad || p.y < bounds_.top + kPad - scroll_) return -1;
+    if (col < 0 || col >= cols || row < 0 || p.x < GridLeft() || p.y < bounds_.top + kPad - scroll_) return -1;
     const size_t index = static_cast<size_t>(row) * cols + col;
     if (index >= items_.size()) return -1;
     const D2D1_RECT_F r = CellRect(index);
@@ -257,14 +260,18 @@ void FileView::Draw(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brush, float d
             dc->CreateBitmapFromWicBitmap(f.pendingIcon.Get(), nullptr, &f.icon);
             f.pendingIcon.Reset();
         }
-        if (!f.iconLoaded) pending = true;
         const float cx = (r.left + r.right) / 2;
-        if (f.icon) {
-            const D2D1_SIZE_F sz = f.icon->GetSize();
-            const float k = std::min(kIcon / sz.width, kIcon / sz.height);
-            const float w = sz.width * k, h = sz.height * k;
-            const D2D1_RECT_F dst{cx - w / 2, r.top + 6.f + (kIcon - h), cx + w / 2, r.top + 6.f + kIcon};
-            dc->DrawBitmap(f.icon.Get(), &dst, 1.f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
+        if (f.folder) {  // folder: własna ikona Veyry (bez wczytywania ikony z powłoki)
+            DrawVeyraFolder(dc, brush, {cx - kIcon / 2, r.top + 6.f, cx + kIcon / 2, r.top + 6.f + kIcon});
+        } else {
+            if (!f.iconLoaded) pending = true;
+            if (f.icon) {
+                const D2D1_SIZE_F sz = f.icon->GetSize();
+                const float k = std::min(kIcon / sz.width, kIcon / sz.height);
+                const float w = sz.width * k, h = sz.height * k;
+                const D2D1_RECT_F dst{cx - w / 2, r.top + 6.f + (kIcon - h), cx + w / 2, r.top + 6.f + kIcon};
+                dc->DrawBitmap(f.icon.Get(), &dst, 1.f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr, nullptr);
+            }
         }
         if (renaming_ == static_cast<int>(i)) {  // pole zmiany nazwy
             const D2D1_RECT_F box{r.left - 2.f, r.top + kLabelTop - 2.f, r.right + 2.f, r.top + kLabelTop + 20.f};
@@ -317,6 +324,7 @@ void FileView::PrepareIcons(float dpi) {
     for (size_t i = 0; i < items_.size() && loaded < kIconsPerFrame; ++i) {
         const D2D1_RECT_F cell = CellRect(i);
         if (cell.bottom < bounds_.top || cell.top > bounds_.bottom || items_[i].iconLoaded) continue;
+        if (items_[i].folder) { items_[i].iconLoaded = true; continue; }  // folder rysujemy sami (ikona Veyry)
         items_[i].iconLoaded = true;
         ++loaded;
         const std::wstring parsing = items_[i].parsing;

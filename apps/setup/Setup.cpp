@@ -10,7 +10,9 @@
 #include "../../src/core/AppWindow.h"
 #include <objbase.h>
 #include <shellapi.h>
+#include <sddl.h>
 #include <shlobj.h>
+#include <taskschd.h>
 #include <tlhelp32.h>
 #include <algorithm>
 #include <atomic>
@@ -30,10 +32,14 @@ D2D1_COLOR_F White(float a) { return D2D1::ColorF(1.f, 1.f, 1.f, a); }
 
 constexpr wchar_t kUninstallKey[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Veyra";
 constexpr wchar_t kIfeoCalc[] = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\calc.exe";
+constexpr wchar_t kIfeoTaskMgr[] = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\taskmgr.exe";
 constexpr wchar_t kWinlogon[] = L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon";
 constexpr wchar_t kRun[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kCalcProtocol[] = L"Software\\Classes\\ms-calculator\\shell";
 constexpr wchar_t kMarker[] = L"veyra-minimal";  // plik obok exploder.exe = wersja Minimal (src/core/Edition.h)
+// Zadanie Harmonogramu z najwyższymi uprawnieniami: aktualizacje i wpisy HKLM bez okna UAC (veyra-zadanie.ps1)
+constexpr wchar_t kTaskFolder[] = L"\\Veyra";
+constexpr wchar_t kTaskName[] = L"Veyra Update";
 
 // Pliki w exe instalatora (setup_payload.rc, RCDATA); fullOnly = tylko w wersji Full
 struct Payload {
@@ -46,6 +52,7 @@ constexpr Payload kPayload[] = {
     {L"I_TERMINAL", L"exploder-terminal.exe", true},
     {L"I_CALC", L"exploder-calc.exe", true},
     {L"I_STORE", L"exploder-store.exe", true},
+    {L"I_TASKMGR", L"exploder-taskmgr.exe", true},
     {L"I_SETTINGS", L"exploder-settings.exe", false},  // w Minimal: zakładka Ekran
     {L"I_WP_DOMYSLNA", L"wallpapers\\veyra-domyslna.jpg", false},
     {L"I_WP_JEZIORO", L"wallpapers\\veyra-jezioro.jpg", false},
@@ -65,6 +72,11 @@ std::wstring SelfPath() {
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     return path;
+}
+std::wstring SelfDir() {
+    std::wstring dir = SelfPath();
+    dir.resize(dir.find_last_of(L'\\'));
+    return dir;
 }
 
 std::wstring InstallDir() {
@@ -188,8 +200,122 @@ bool WriteResource(const wchar_t* res, const std::wstring& path) {
     return false;
 }
 
+// SID konta, na którym działa ten proces (np. "S-1-5-21-…")
+std::wstring UserSid() {
+    std::wstring out;
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return out;
+    BYTE buf[256]{};
+    DWORD size = 0;
+    PWSTR sid = nullptr;
+    if (GetTokenInformation(token, TokenUser, buf, sizeof(buf), &size) &&
+        ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buf)->User.Sid, &sid)) {
+        out = sid;
+        LocalFree(sid);
+    }
+    CloseHandle(token);
+    return out;
+}
+
+// SID w postaci "S-1-…" (nic innego nie trafia do XML-a zadania)
+bool ValidSid(const std::wstring& sid) {
+    return sid.size() > 4 && sid.size() < 200 && sid.rfind(L"S-1-", 0) == 0 &&
+           std::all_of(sid.begin(), sid.end(), [](wchar_t c) { return iswdigit(c) || c == L'-' || c == L'S'; });
+}
+
+struct Bstr {
+    BSTR s;
+    explicit Bstr(const std::wstring& v) : s(SysAllocString(v.c_str())) {}
+    ~Bstr() { SysFreeString(s); }
+    operator BSTR() const { return s; }
+};
+
+ComPtr<ITaskFolder> TaskRoot() {
+    ComPtr<ITaskService> svc;
+    ComPtr<ITaskFolder> root;
+    if (SUCCEEDED(CoCreateInstance(__uuidof(TaskScheduler), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&svc))) &&
+        SUCCEEDED(svc->Connect(VARIANT{}, VARIANT{}, VARIANT{}, VARIANT{})))
+        svc->GetFolder(Bstr(L"\\"), &root);
+    return root;
+}
+
+// Zadanie "\Veyra\Veyra Update": konto użytkownika (sid) z najwyższymi uprawnieniami, tylko na żądanie
+// ("schtasks /run"). Prawo uruchomienia ma tylko ten użytkownik (i administratorzy).
+// Akcja: VeyraSetup.exe /zadanie z folderu instalacji (Program Files — zapis tylko dla administratorów).
+bool CreateAdminTask(const std::wstring& dir, const std::wstring& sid) {
+    if (!ValidSid(sid)) return false;
+    const ComPtr<ITaskFolder> root = TaskRoot();
+    if (!root) return false;
+    const std::wstring sddl = L"D:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;FRFX;;;" + sid + L")";
+    ComPtr<ITaskFolder> folder;
+    if (FAILED(root->GetFolder(Bstr(kTaskFolder), &folder)) &&
+        FAILED(root->CreateFolder(Bstr(kTaskFolder), VARIANT{}, &folder)))
+        return false;
+    const std::wstring xml =
+        L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>"
+        L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"
+        L"<RegistrationInfo><Author>Veyra</Author><Description>Aktualizacje Veyry i jej ustawienia systemowe bez pytania o zgodę "
+        L"administratora (utworzone przez instalator Veyry).</Description></RegistrationInfo>"
+        L"<Principals><Principal id=\"Author\"><UserId>" + sid +
+        L"</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>"
+        L"<Settings><MultipleInstancesPolicy>Queue</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+        L"<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate>"
+        L"<AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden>"
+        L"<ExecutionTimeLimit>PT15M</ExecutionTimeLimit><Priority>7</Priority>"
+        L"<IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings></Settings>"
+        L"<Actions Context=\"Author\"><Exec><Command>\"" + dir + L"\\VeyraSetup.exe\"</Command><Arguments>/zadanie</Arguments></Exec></Actions>"
+        L"</Task>";
+    VARIANT sd{};
+    sd.vt = VT_BSTR;
+    sd.bstrVal = SysAllocString(sddl.c_str());
+    ComPtr<IRegisteredTask> task;
+    const HRESULT hr = folder->RegisterTask(Bstr(kTaskName), Bstr(xml), TASK_CREATE_OR_UPDATE, VARIANT{}, VARIANT{},
+                                           TASK_LOGON_INTERACTIVE_TOKEN, sd, &task);
+    VariantClear(&sd);
+    return SUCCEEDED(hr);
+}
+
+void DeleteAdminTask() {
+    const ComPtr<ITaskFolder> root = TaskRoot();
+    ComPtr<ITaskFolder> folder;
+    if (!root || FAILED(root->GetFolder(Bstr(kTaskFolder), &folder))) return;
+    folder->DeleteTask(Bstr(kTaskName), 0);
+    LONG count = 1;
+    ComPtr<IRegisteredTaskCollection> rest;
+    if (SUCCEEDED(folder->GetTasks(TASK_ENUM_HIDDEN, &rest)) && SUCCEEDED(rest->get_Count(&count)) && count == 0)
+        root->DeleteFolder(Bstr(kTaskFolder), 0);
+}
+
+// "/zadanie" — uruchamiane przez zadanie Harmonogramu (najwyższe uprawnienia): skrypt z zasobów do <Veyra>\zadanie
+// (zapis tylko dla administratorów) i PowerShell bez okna. Nowy VeyraSetup.exe (z aktualizacji) przynosi nowy skrypt.
+int RunAdminTask() {
+    if (!IsElevated()) return ErrArgs;
+    const std::wstring dir = SelfDir();
+    if (GetFileAttributesW((dir + L"\\exploder.exe").c_str()) == INVALID_FILE_ATTRIBUTES) return ErrArgs;
+    CreateDirectoryW((dir + L"\\zadanie").c_str(), nullptr);
+    const std::wstring script = dir + L"\\zadanie\\veyra-zadanie.ps1";
+    const HRSRC r = FindResourceW(nullptr, L"I_ZADANIE", RT_RCDATA);
+    const HGLOBAL h = r ? LoadResource(nullptr, r) : nullptr;
+    const void* data = h ? LockResource(h) : nullptr;
+    if (!data) return ErrFiles;
+    const HANDLE f = CreateFileW(script.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return ErrFiles;
+    DWORD written = 0;
+    const bool ok = WriteFile(f, "\xEF\xBB\xBF", 3, &written, nullptr) &&  // BOM — PowerShell 5 czyta wtedy polskie znaki
+                    WriteFile(f, data, SizeofResource(nullptr, r), &written, nullptr);
+    CloseHandle(f);
+    if (!ok) return ErrFiles;
+    wchar_t sys[MAX_PATH]{};
+    GetSystemDirectoryW(sys, MAX_PATH);
+    DWORD code = 0;
+    if (!StartProcess(std::wstring(sys) + L"\\WindowsPowerShell\\v1.0\\powershell.exe",
+                      L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script + L"\" -Dir \"" + dir + L"\"", true, &code))
+        return ErrFiles;
+    return static_cast<int>(code);
+}
+
 // ---------------- Część z uprawnieniami administratora (/wykonaj …) ----------------
-int ElevatedInstall(bool full) {
+int ElevatedInstall(bool full, const std::wstring& sid) {
     const std::wstring dir = InstallDir();
     KillVeyra();
     CreateDirectoryW(dir.c_str(), nullptr);
@@ -235,13 +361,21 @@ int ElevatedInstall(bool full) {
     } else if (Lower(RegString(HKEY_LOCAL_MACHINE, kIfeoCalc, L"Debugger")).find(L"exploder-calc.exe") != std::wstring::npos) {
         RegDeleteKeyValueW(HKEY_LOCAL_MACHINE, kIfeoCalc, L"Debugger");
     }
+    // Podmianę Menedżera zadań włącza użytkownik w Ustawieniach (opcjonalna); zmiana Full → Minimal ją zdejmuje
+    if (!full && Lower(RegString(HKEY_LOCAL_MACHINE, kIfeoTaskMgr, L"Debugger")).find(L"exploder-taskmgr.exe") != std::wstring::npos)
+        RegDeleteKeyValueW(HKEY_LOCAL_MACHINE, kIfeoTaskMgr, L"Debugger");
+    // Bez zadania aktualizacje działają dalej, tylko z prośbą UAC
+    CreateAdminTask(dir, sid);
     return Ok;
 }
 
 int ElevatedUninstall() {
     KillVeyra();
+    DeleteAdminTask();
     if (Lower(RegString(HKEY_LOCAL_MACHINE, kIfeoCalc, L"Debugger")).find(L"exploder-calc.exe") != std::wstring::npos)
         RegDeleteKeyValueW(HKEY_LOCAL_MACHINE, kIfeoCalc, L"Debugger");
+    if (Lower(RegString(HKEY_LOCAL_MACHINE, kIfeoTaskMgr, L"Debugger")).find(L"exploder-taskmgr.exe") != std::wstring::npos)
+        RegDeleteKeyValueW(HKEY_LOCAL_MACHINE, kIfeoTaskMgr, L"Debugger");
     std::wstring dir = RegString(HKEY_LOCAL_MACHINE, kUninstallKey, L"InstallLocation");
     if (dir.empty()) dir = InstallDir();
     std::error_code ec;
@@ -260,7 +394,7 @@ int RunElevated(HWND owner, const std::wstring& args, bool& cancelled) {
     cancelled = false;
     if (IsElevated()) {  // już jako administrator (np. UAC wyłączone) — bez drugiego procesu
         if (args == L"/wykonaj odinstaluj") return ElevatedUninstall();
-        return ElevatedInstall(args == L"/wykonaj instaluj full");
+        return ElevatedInstall(args.rfind(L"/wykonaj instaluj full", 0) == 0, UserSid());
     }
     const std::wstring self = SelfPath();
     SHELLEXECUTEINFOW sei{sizeof(sei)};
@@ -567,7 +701,7 @@ private:
         const std::wstring dir = InstallDir();
         Step(0.1f, L"Kopiowanie plików do " + dir + L"…");
         bool cancelled = false;
-        const int code = RunElevated(owner, full ? L"/wykonaj instaluj full" : L"/wykonaj instaluj minimal", cancelled);
+        const int code = RunElevated(owner, (full ? L"/wykonaj instaluj full " : L"/wykonaj instaluj minimal ") + UserSid(), cancelled);
         if (cancelled) return L"Instalacja wymaga zgody administratora (Program Files).";
         if (code != Ok) return ErrorText(code);
 
@@ -659,11 +793,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     if (args.size() >= 3 && args[1] == L"/wykonaj") {
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         int code = ErrArgs;
+        // Konto użytkownika (SID) z części bez uprawnień — przy UAC innego administratora zadanie dostaje użytkownik
+        const std::wstring sid = args.size() >= 5 ? args[4] : args.size() == 4 && args[2] == L"zadanie" ? args[3] : UserSid();
         if (args[2] == L"odinstaluj") code = ElevatedUninstall();
-        else if (args[2] == L"instaluj" && args.size() >= 4) code = ElevatedInstall(args[3] == L"full");
+        else if (args[2] == L"instaluj" && args.size() >= 4) code = ElevatedInstall(args[3] == L"full", sid);
+        // Samo zadanie Harmonogramu (aktualizacja ze starszej wersji, która go nie tworzyła)
+        else if (args[2] == L"zadanie") code = CreateAdminTask(SelfDir(), sid) ? Ok : ErrRegistry;
         CoUninitialize();
         return code;
     }
+    if (args.size() == 2 && args[1] == L"/zadanie") return RunAdminTask();
     const bool uninstall = args.size() >= 2 && args[1] == L"/odinstaluj";
     const std::wstring self = SelfPath();
     // Deinstalator z folderu instalacji: kopia w %TEMP% (folder da się wtedy usunąć), na końcu kopia usuwa się sama

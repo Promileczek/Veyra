@@ -65,6 +65,37 @@ void StartMenu::OnShow() {
     hover_ = hoverPower_ = -1;
 }
 
+// Zdjęcie konta: shell32 #261 (SHGetUserPicturePath — nieudokumentowane, z niego korzysta menu Start Windows) zapisuje
+// je jako .bmp i podaje ścieżkę; bez zdjęcia — domyślny obrazek konta Windows z ProgramData
+ComPtr<ID2D1Bitmap> StartMenu::LoadUserPicture(ID2D1DeviceContext* dc) {
+    std::vector<std::wstring> paths;
+    using GetPicturePath = HRESULT(WINAPI*)(LPCWSTR, DWORD, LPWSTR, UINT);
+    if (HMODULE shell = GetModuleHandleW(L"shell32.dll"))
+        if (auto fn = reinterpret_cast<GetPicturePath>(GetProcAddress(shell, MAKEINTRESOURCEA(261)))) {
+            wchar_t path[MAX_PATH]{};
+            if (SUCCEEDED(fn(nullptr, 0x80000000 /* utwórz, gdy brak */, path, MAX_PATH)) && *path) paths.push_back(path);
+        }
+    wchar_t data[MAX_PATH]{};
+    GetEnvironmentVariableW(L"ProgramData", data, MAX_PATH);
+    paths.push_back(std::wstring(data) + L"\\Microsoft\\User Account Pictures\\user-192.png");
+    paths.push_back(std::wstring(data) + L"\\Microsoft\\User Account Pictures\\user.png");
+    IWICImagingFactory* wic = g_->WIC();
+    for (const std::wstring& p : paths) {
+        ComPtr<IWICBitmapDecoder> decoder;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        ComPtr<IWICFormatConverter> conv;
+        ComPtr<ID2D1Bitmap> bmp;
+        if (GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES &&
+            SUCCEEDED(wic->CreateDecoderFromFilename(p.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) &&
+            SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(wic->CreateFormatConverter(&conv)) &&
+            SUCCEEDED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.f,
+                                       WICBitmapPaletteTypeMedianCut)) &&
+            SUCCEEDED(dc->CreateBitmapFromWicBitmap(conv.Get(), nullptr, &bmp)))
+            return bmp;
+    }
+    return nullptr;
+}
+
 D2D1_RECT_F StartMenu::RowRect(int i) const {
     float y = kHeader;
     for (int k = 0; k < i; ++k) y += kRows[k].action < 0 ? kSep : kRow;
@@ -97,12 +128,25 @@ void StartMenu::Paint(ID2D1DeviceContext* dc) {
         centered_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         centered_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
-    // Nagłówek: logo Windows + użytkownik
-    const float lx = 20.f, ly = 17.f, sq = 9.f, gap = 2.f;
-    for (int i = 0; i < 4; ++i)
-        Fill(dc, {lx + (i % 2) * (sq + gap), ly + (i / 2) * (sq + gap), lx + (i % 2) * (sq + gap) + sq, ly + (i / 2) * (sq + gap) + sq}, kAccent, 1.5f);
-    Text(dc, user_.empty() ? L"Windows" : user_, titleFormat_.Get(), {50.f, 10.f, kW - 16.f, 32.f}, kText);
-    Text(dc, L"Exploder", smallFormat_.Get(), {50.f, 30.f, kW - 16.f, 46.f}, kDim);
+    // Nagłówek: zdjęcie konta Windows (w kółku) + użytkownik; bez zdjęcia — logo Windows
+    if (!pictureTried_) {
+        pictureTried_ = true;
+        picture_ = LoadUserPicture(dc);
+    }
+    const D2D1_ELLIPSE avatar = D2D1::Ellipse({30.f, kHeader / 2.f}, 16.f, 16.f);
+    ComPtr<ID2D1Factory> factory;
+    dc->GetFactory(&factory);
+    ComPtr<ID2D1EllipseGeometry> circle;
+    if (picture_ && factory && SUCCEEDED(factory->CreateEllipseGeometry(avatar, &circle))) {
+        dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), circle.Get()), nullptr);
+        dc->DrawBitmap(picture_.Get(), {14.f, avatar.point.y - 16.f, 46.f, avatar.point.y + 16.f}, 1.f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+        dc->PopLayer();
+    } else {
+        const float lx = 20.f, ly = 17.f, sq = 9.f, gap = 2.f;
+        for (int i = 0; i < 4; ++i)
+            Fill(dc, {lx + (i % 2) * (sq + gap), ly + (i / 2) * (sq + gap), lx + (i % 2) * (sq + gap) + sq, ly + (i / 2) * (sq + gap) + sq}, kAccent, 1.5f);
+    }
+    Text(dc, user_.empty() ? L"Windows" : user_, titleFormat_.Get(), {56.f, 10.f, kW - 16.f, kHeader - 10.f}, kText);
 
     for (int i = 0; i < static_cast<int>(std::size(kRows)); ++i) {
         const D2D1_RECT_F r = RowRect(i);
@@ -155,7 +199,7 @@ void StartMenu::Run(Action a) {
         if (openFiles) openFiles();
         break;
     case Action::Settings: LaunchSibling(L"exploder-settings.exe", nullptr); break;
-    case Action::TaskManager: ShellExecuteW(nullptr, L"open", L"taskmgr.exe", nullptr, nullptr, SW_SHOWNORMAL); break;
+    case Action::TaskManager: LaunchSibling(L"exploder-taskmgr.exe", L"taskmgr.exe"); break;  // Minimal: systemowy
     case Action::Desktop:
         if (showDesktop) showDesktop();
         break;

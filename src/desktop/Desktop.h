@@ -83,6 +83,7 @@ private:
     FilesWidget files_;
     StatsWidget stats_;
     float statsHeight_ = 0.f;
+    bool showStats_ = true;  // panel statystyk (Ustawienia → Personalizacja)
     std::function<void(ComPtr<IShellItem>)> openFolder_;
     bool filesCapture_ = false;
     float launcherTop_ = 0.f;

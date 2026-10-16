@@ -200,20 +200,58 @@ inline bool BuildToolsAvailable() {
 }
 
 // Skrypt aktualizacji (zapisywany z BOM — PowerShell 5 czyta wtedy polskie znaki poprawnie)
-constexpr char kScript[] = R"PS(param([string]$Dest, [string]$ZipUrl, [string]$Version, [switch]$Binary, [switch]$Elevated)
+// Cały skrypt działa na koncie użytkownika (Veyra po aktualizacji startuje ze zwykłymi uprawnieniami). Folder bez prawa
+// zapisu (Program Files) → tylko podmiana plików jako administrator: ten sam skrypt z -CopyFrom (prośba UAC).
+// Z zadaniem Harmonogramu "\Veyra\Veyra Update" (instalator) — bez UAC; -Official = oficjalne wydanie z GitHuba.
+constexpr char kScript[] = R"PS(param([string]$Dest, [string]$ZipUrl, [string]$Version, [switch]$Binary, [switch]$Official, [string]$CopyFrom, [string]$Sid)
 $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
-# Skrypt jako administrator (instalacja w Program Files) → Veyrę i Ustawienia uruchamiamy z uprawnieniami zwykłego użytkownika
-function Run($exe, $arg) {
-  if ($Elevated) { Start-Process runas.exe -ArgumentList ('/trustlevel:0x20000 "\"' + $exe + '\" ' + $arg + '"') -WindowStyle Hidden }
-  elseif ($arg) { Start-Process $exe -ArgumentList $arg } else { Start-Process $exe }
+# Podmiana plików (Minimal: tylko jej programy)
+function CopyFiles($from) {
+  $minimal = Test-Path (Join-Path $Dest 'veyra-minimal')
+  Get-ChildItem $from -Filter '*.exe' | Where-Object { -not $minimal -or $_.Name -in @('exploder.exe', 'exploder-settings.exe', 'VeyraSetup.exe') } |
+    Copy-Item -Destination $Dest -Force
+  Copy-Item (Join-Path $from '*.pdb') $Dest -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force (Join-Path $Dest 'wallpapers') | Out-Null
+  if (Test-Path (Join-Path $from 'wallpapers')) { Copy-Item (Join-Path $from 'wallpapers\*') (Join-Path $Dest 'wallpapers') -Force }
 }
+if ($CopyFrom) {  # część administratora
+  try { CopyFiles $CopyFrom } catch { exit 1 }
+  # Instalacja ze starszej wersji (bez zadania Harmonogramu): zadanie teraz — następne aktualizacje już bez UAC
+  $setup = Join-Path $Dest 'VeyraSetup.exe'
+  if ($Sid -match '^S-1-[0-9-]+$' -and (Test-Path $setup)) { Start-Process $setup -ArgumentList ('/wykonaj zadanie ' + $Sid) -Wait -WindowStyle Hidden }
+  exit 0
+}
+function Run($exe, $arg) { if ($arg) { Start-Process $exe -ArgumentList $arg } else { Start-Process $exe } }
 $root = Join-Path $env:LOCALAPPDATA 'Exploder\update'
 $status = Join-Path $root 'status.txt'; $log = Join-Path $root 'update.log'
 function S($t) { Set-Content -Path $status -Value $t -Encoding UTF8; Add-Content -Path $log -Value ((Get-Date -Format 'HH:mm:ss') + ' ' + $t) -Encoding UTF8 }
 $hadExplorer = [bool](Get-Process explorer -ErrorAction SilentlyContinue)
 $hadShell = [bool](Get-Process exploder -ErrorAction SilentlyContinue)
+# Zadanie Harmonogramu "\Veyra\Veyra Update" (instalator; najwyższe uprawnienia) — akcja = jedno słowo w zadanie\prosba.txt,
+# wynik w zadanie\wynik.txt. Pobiera samo z oficjalnego wydania, więc tylko dla gotowych plików z GitHuba.
+function Task($what, $seconds) {
+  $q = Join-Path $env:LOCALAPPDATA 'Exploder\zadanie'; $res = Join-Path $q 'wynik.txt'
+  New-Item -ItemType Directory -Force $q | Out-Null
+  Remove-Item $res -Force -ErrorAction SilentlyContinue
+  Set-Content -Path (Join-Path $q 'prosba.txt') -Value $what -Encoding ASCII
+  cmd /c 'schtasks /run /tn "\Veyra\Veyra Update" >nul 2>&1'
+  if ($LASTEXITCODE -ne 0) { throw 'nie udało się uruchomić zadania „Veyra Update”' }
+  $end = (Get-Date).AddSeconds($seconds)
+  while (-not (Test-Path $res)) {
+    if ((Get-Date) -gt $end) { throw 'zadanie „Veyra Update” nie odpowiada' }
+    Start-Sleep -Milliseconds 300
+  }
+  Start-Sleep -Milliseconds 300
+  $r = ([string](Get-Content $res -TotalCount 1 -Encoding UTF8)).Trim()
+  if (-not $r.StartsWith('OK')) { throw ($r -replace '^BŁĄD\s*', '') }
+}
+$writable = $true
+try { [IO.File]::Create((Join-Path $Dest '.veyra-zapis'), 1, [IO.FileOptions]::DeleteOnClose).Dispose() } catch { $writable = $false }
+$useTask = $false
+if (-not $writable -and $Binary -and $Official) { cmd /c 'schtasks /query /tn "\Veyra\Veyra Update" >nul 2>&1'; $useTask = $LASTEXITCODE -eq 0 }
 try {
   if ($Binary) { S 'Pobieranie nowej wersji…' } else { S 'Pobieranie kodu z GitHuba…' }
+  if ($useTask) { Task 'pobierz' 900 } else {
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $zip = Join-Path $root 'veyra.zip'
   Invoke-WebRequest -Uri $ZipUrl -OutFile $zip -UseBasicParsing
@@ -242,15 +280,22 @@ try {
        -RedirectStandardOutput (Join-Path $root 'build.log') -RedirectStandardError (Join-Path $root 'build-err.log')
   if ($p.ExitCode -ne 0) { throw 'budowanie nie powiodło się (szczegóły: update\build.log)' }
   }
+  }
   S 'Instalowanie…'
   # taskkill /f (kod wyjścia 1): po Stop-Process (kod -1) Windows sam uruchamia Eksplorator ponownie
   # przez cmd: „nie znaleziono procesu” (np. zamknięty Terminal) nie może przerwać skryptu ($ErrorActionPreference = 'Stop')
   cmd /c 'taskkill /f /im exploder.exe /im exploder-terminal.exe /im exploder-calc.exe /im exploder-store.exe /im exploder-settings.exe >nul 2>&1'
   Start-Sleep 1
-  Copy-Item (Join-Path $bld '*.exe') $Dest -Force
-  Copy-Item (Join-Path $bld '*.pdb') $Dest -Force -ErrorAction SilentlyContinue
-  New-Item -ItemType Directory -Force (Join-Path $Dest 'wallpapers') | Out-Null
-  if (Test-Path (Join-Path $bld 'wallpapers')) { Copy-Item (Join-Path $bld 'wallpapers\*') (Join-Path $Dest 'wallpapers') -Force }
+  if ($useTask) { Task 'zainstaluj' 300 }
+  elseif ($writable) { CopyFiles $bld }
+  else {
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    try {
+      $p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' +
+           $PSCommandPath + '" -Dest "' + $Dest + '" -CopyFrom "' + $bld + '" -Sid ' + $sid)
+    } catch { throw 'aktualizacja wymaga zgody administratora' }
+    if ($p.ExitCode -ne 0) { throw ('nie udało się podmienić plików w ' + $Dest) }
+  }
   if (-not $hadExplorer) {  # Eksplorator potrafi wrócić sam — zamykamy, aż zniknie
     for ($i = 0; $i -lt 5 -and (Get-Process explorer -ErrorAction SilentlyContinue); $i++) {
       cmd /c 'taskkill /f /im explorer.exe >nul 2>&1'; Start-Sleep -Milliseconds 1500
@@ -286,15 +331,43 @@ inline bool Start(const std::wstring& exeDir, const std::wstring& version, const
     }
     std::wstring dest = exeDir;
     if (!dest.empty() && dest.back() == L'\\') dest.pop_back();
-    // Folder bez prawa zapisu (instalacja w Program Files) → skrypt jako administrator (prośba UAC)
-    const HANDLE probe = CreateFileW((dest + L"\\.veyra-zapis").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                                     FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-    const bool elevate = probe == INVALID_HANDLE_VALUE;
-    if (!elevate) CloseHandle(probe);
     const std::wstring args = L"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + L"\" -Dest \"" + dest +
                               L"\" -ZipUrl \"" + (binaryZip.empty() ? ZipUrl() : binaryZip) + L"\" -Version \"" + version + L"\"" +
-                              (binaryZip.empty() ? L"" : L" -Binary") + (elevate ? L" -Elevated" : L"");
-    return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, elevate ? L"runas" : L"open", L"powershell.exe", args.c_str(), nullptr, SW_HIDE)) > 32;
+                              (binaryZip.empty() ? L"" : L" -Binary") +
+                              (Settings::Get(L"updateReleaseUrl", L"").empty() ? L" -Official" : L"");
+    return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", L"powershell.exe", args.c_str(), nullptr, SW_HIDE)) > 32;
+}
+
+// Zadanie Harmonogramu "\Veyra\Veyra Update" (tworzy je instalator): akcje administratora bez okna UAC
+// (apps/setup/veyra-zadanie.ps1). Kod wyjścia schtasks bez okna konsoli; -1 = nie uruchomiono.
+inline int Schtasks(const std::wstring& args) {
+    wchar_t sys[MAX_PATH]{};
+    GetSystemDirectoryW(sys, MAX_PATH);
+    std::wstring cmd = L"\"" + std::wstring(sys) + L"\\schtasks.exe\" " + args;
+    STARTUPINFOW si{sizeof(si)};
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return -1;
+    WaitForSingleObject(pi.hProcess, 10000);
+    DWORD code = static_cast<DWORD>(-1);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return static_cast<int>(code);
+}
+inline bool TaskExists() { return Schtasks(L"/query /tn \"\\Veyra\\Veyra Update\"") == 0; }
+// Prośba do zadania (jedno słowo, np. "kalkulator-wlacz"); nie czeka na wynik (zadanie\wynik.txt)
+inline bool RequestTask(const wchar_t* action) {
+    wchar_t base[MAX_PATH]{};
+    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    const std::wstring dir = std::wstring(base, n) + L"\\Exploder\\zadanie";
+    CreateDirectoryW((std::wstring(base, n) + L"\\Exploder").c_str(), nullptr);
+    CreateDirectoryW(dir.c_str(), nullptr);
+    DeleteFileW((dir + L"\\wynik.txt").c_str());
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, (dir + L"\\prosba.txt").c_str(), L"w") || !f) return false;
+    fputws(action, f);
+    fclose(f);
+    return Schtasks(L"/run /tn \"\\Veyra\\Veyra Update\"") == 0;
 }
 
 // Bieżący stan skryptu (pusty = brak)

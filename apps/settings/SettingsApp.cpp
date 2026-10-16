@@ -38,13 +38,16 @@ const D2D1_COLOR_F kBody = D2D1::ColorF(0x1C1C21), kSide = D2D1::ColorF(0x17171B
                    kOnAccent = D2D1::ColorF(0x0B1A26);
 D2D1_COLOR_F White(float a) { return D2D1::ColorF(1.f, 1.f, 1.f, a); }
 
-enum Section { Personalize, Desktop, Display, Apps, System, Updates, About, SectionCount };
-const wchar_t* const kSectionNames[] = {L"Personalizacja", L"Pulpit i okna", L"Ekran", L"Aplikacje", L"System", L"Aktualizacje", L"Informacje"};
-const wchar_t kSectionGlyphs[] = {L'\xE771', L'\xE7F4', L'\xE7F8', L'\xE71D', L'\xE770', L'\xE895', L'\xE946'};
-// Veyra Minimal ma tylko Ekran i Informacje (reszta dotyczy aplikacji Veyry, których w Minimal nie ma)
+// Desktop (Pulpit i okna) scalone z Personalizacją — zostaje w enumie dla zgodności indeksów, ale nie ma go w nawigacji
+enum Section { Personalize, Desktop, Display, Apps, System, Updates, About, Accounts, Mouse, SectionCount };
+const wchar_t* const kSectionNames[] = {L"Personalizacja", L"Pulpit i okna", L"Ekran",      L"Aplikacje",
+                                        L"System",         L"Aktualizacje",  L"Informacje", L"Konta", L"Mysz"};
+const wchar_t kSectionGlyphs[] = {L'\xE771', L'\xE7F4', L'\xE7F8', L'\xE71D', L'\xE770', L'\xE895', L'\xE946', L'\xE77B', L'\xE962'};
+// Veyra Minimal ma tylko Ekran i Informacje (reszta dotyczy aplikacji Veyry, których w Minimal nie ma).
+// Kolejność Full: Aktualizacje, Informacje, System na górze, potem Personalizacja, Mysz, Ekran, Aplikacje, Konta.
 std::vector<int> VisibleSections() {
     if (Edition::Minimal()) return {Display, About};
-    return {Personalize, Desktop, Display, Apps, System, Updates, About};
+    return {Updates, About, System, Personalize, Mouse, Display, Apps, Accounts};
 }
 
 // Skala Veyry: wartości ustawienia "uiScale" (0 = auto)
@@ -133,25 +136,28 @@ bool SetShellVeyra(bool on) {
     return st == ERROR_SUCCESS;
 }
 
-// Kalkulator Veyry zamiast systemowego: Image File Execution Options\calc.exe\Debugger → exploder-calc.exe.
-// Każde uruchomienie calc.exe (Win+R, skróty, skrypty) otwiera Kalkulator Veyry; usunięcie wpisu przywraca systemowy.
-// HKLM wymaga administratora — bez uprawnień zapis przez reg.exe z prośbą UAC.
-constexpr wchar_t kIfeoCalc[] = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\calc.exe";
-
-bool CalcIsVeyra() {
+// Program Veyry zamiast systemowego przez Image File Execution Options\<exe>\Debugger → <program Veyry>.
+// Każde uruchomienie <exe> (Win+R, skróty, Ctrl+Shift+Esc) otwiera program Veyry; usunięcie wpisu przywraca systemowy.
+// HKLM wymaga administratora — bez uprawnień zadanie Harmonogramu (bez UAC), a bez niego reg.exe z prośbą UAC.
+std::wstring IfeoKey(const wchar_t* sysExe) {
+    return std::wstring(L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\") + sysExe;
+}
+bool IfeoIsVeyra(const wchar_t* sysExe, const wchar_t* veyraExe) {
     wchar_t value[MAX_PATH * 2]{};
     DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_LOCAL_MACHINE, kIfeoCalc, L"Debugger", RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return false;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, IfeoKey(sysExe).c_str(), L"Debugger", RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS)
+        return false;
     std::wstring v = value;
     std::transform(v.begin(), v.end(), v.begin(), ::towlower);
-    return v.find(L"exploder-calc.exe") != std::wstring::npos;
+    return v.find(veyraExe) != std::wstring::npos;
 }
-// true = zapisane od razu; false = uruchomiono reg.exe z prośbą UAC (wynik sprawdzamy później)
-bool SetCalcVeyra(bool on) {
-    const std::wstring debugger = L"\"" + ExeDir() + L"exploder-calc.exe\"";
+// true = zapisane od razu; false = uruchomiono zadanie/reg.exe (wynik sprawdzamy później)
+bool SetIfeoVeyra(const wchar_t* sysExe, const wchar_t* veyraExe, const wchar_t* taskOn, const wchar_t* taskOff, bool on) {
+    const std::wstring ifeo = IfeoKey(sysExe);
+    const std::wstring debugger = L"\"" + ExeDir() + veyraExe + L"\"";
     HKEY key = nullptr;
-    LSTATUS st = on ? RegCreateKeyExW(HKEY_LOCAL_MACHINE, kIfeoCalc, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr)
-                    : RegOpenKeyExW(HKEY_LOCAL_MACHINE, kIfeoCalc, 0, KEY_SET_VALUE, &key);
+    LSTATUS st = on ? RegCreateKeyExW(HKEY_LOCAL_MACHINE, ifeo.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr)
+                    : RegOpenKeyExW(HKEY_LOCAL_MACHINE, ifeo.c_str(), 0, KEY_SET_VALUE, &key);
     if (st == ERROR_SUCCESS) {
         st = on ? RegSetValueExW(key, L"Debugger", 0, REG_SZ, reinterpret_cast<const BYTE*>(debugger.c_str()),
                                  static_cast<DWORD>((debugger.size() + 1) * sizeof(wchar_t)))
@@ -161,13 +167,17 @@ bool SetCalcVeyra(bool on) {
     } else if (!on && st == ERROR_FILE_NOT_FOUND) {
         return true;
     }
-    // Brak uprawnień: reg.exe jako administrator
-    const std::wstring regKey = L"\"HKLM\\" + std::wstring(kIfeoCalc) + L"\"";
-    const std::wstring args = on ? L"add " + regKey + L" /v Debugger /t REG_SZ /d \"\\\"" + ExeDir() + L"exploder-calc.exe\\\"\" /f"
+    if (Updater::TaskExists() && Updater::RequestTask(on ? taskOn : taskOff)) return false;
+    const std::wstring regKey = L"\"HKLM\\" + ifeo + L"\"";
+    const std::wstring args = on ? L"add " + regKey + L" /v Debugger /t REG_SZ /d \"\\\"" + ExeDir() + veyraExe + L"\\\"\" /f"
                                  : L"delete " + regKey + L" /v Debugger /f";
     ShellExecuteW(nullptr, L"runas", L"reg.exe", args.c_str(), nullptr, SW_HIDE);
     return false;
 }
+bool CalcIsVeyra() { return IfeoIsVeyra(L"calc.exe", L"exploder-calc.exe"); }
+bool SetCalcVeyra(bool on) { return SetIfeoVeyra(L"calc.exe", L"exploder-calc.exe", L"kalkulator-wlacz", L"kalkulator-wylacz", on); }
+bool TaskMgrIsVeyra() { return IfeoIsVeyra(L"taskmgr.exe", L"exploder-taskmgr.exe"); }
+bool SetTaskMgrVeyra(bool on) { return SetIfeoVeyra(L"taskmgr.exe", L"exploder-taskmgr.exe", L"menedzer-wlacz", L"menedzer-wylacz", on); }
 
 // Pamięć prywatna powłoki (exploder.exe) w MB; -1 = nie działa
 int ShellMemoryMb() {
@@ -216,6 +226,7 @@ public:
         descFormat_ = MakeFormat(L"Segoe UI", 11.5f);
         buttonFormat_ = MakeFormat(L"Segoe UI", 12.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
         glyphFormat_ = MakeFormat(L"Segoe MDL2 Assets", 15.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+        glyphBigFormat_ = MakeFormat(L"Segoe MDL2 Assets", 34.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
         sectionLabelFormat_ = MakeFormat(L"Segoe UI", 11.f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
         wrapFormat_ = MakeFormat(L"Segoe UI", 11.5f);  // opis w kilku liniach
         if (wrapFormat_) {
@@ -225,6 +236,7 @@ public:
         wallpaper_ = CurrentWallpaper();
         shellVeyra_ = ShellIsVeyra();
         calcVeyra_ = CalcIsVeyra();
+        taskmgrVeyra_ = TaskMgrIsVeyra();
         monitors_ = Displays::List();
         if (Edition::Minimal()) section_ = Display;
         StartThumbnails();
@@ -264,20 +276,21 @@ protected:
             AddHit(r, HitKind::Section, i);
         }
 
-        // Zawartość (przewijana)
-        const D2D1_RECT_F content{kSideW, 0.f, W, H};
+        // Zawartość (przewijana) — pod paskiem tytułu, żeby karty nie wjeżdżały na kropki okna
+        const D2D1_RECT_F content{kSideW, titleH_, W, H};
         dc->PushAxisAlignedClip(content, D2D1_ANTIALIAS_MODE_ALIASED);
         float y = 44.f - scroll_;
         Text(dc, kSectionNames[section_], headerFormat_.Get(), {kSideW + kPad, y, W - kPad, y + 36.f}, White(0.97f));
         y += 56.f;
         switch (section_) {
         case Personalize: y = PaintPersonalize(dc, y); break;
-        case Desktop: y = PaintDesktop(dc, y); break;
         case Display: y = PaintDisplay(dc, y); break;
         case Apps: y = PaintApps(dc, y); break;
         case System: y = PaintSystem(dc, y); break;
         case Updates: y = PaintUpdates(dc, y); break;
         case About: y = PaintAbout(dc, y); break;
+        case Accounts: y = PaintAccounts(dc, y); break;
+        case Mouse: y = PaintMouse(dc, y); break;
         default: break;
         }
         dc->PopAxisAlignedClip();
@@ -330,18 +343,115 @@ protected:
             y += 24.f;
             if (thumbs_.empty()) {
                 Text(dc, thumbsDone_ ? L"Nie znaleziono obrazów" : L"Wczytywanie…", descFormat_.Get(), {L, y, R, y + 20.f}, White(0.5f));
-                return y + 30.f;
+                y += 30.f;
+            } else {
+                n = 0;
+                for (size_t i = 0; i < thumbs_.size(); ++i) {
+                    if (thumbs_[i].user) continue;
+                    const float x = L + (n % cols) * (tw + gap), ty = y + (n / cols) * (th + gap);
+                    ++n;
+                    ThumbTile(dc, i, {x, ty, x + tw, ty + th});
+                }
+                y += ((n + cols - 1) / cols) * (th + gap);
             }
-            n = 0;
-            for (size_t i = 0; i < thumbs_.size(); ++i) {
-                if (thumbs_[i].user) continue;
-                const float x = L + (n % cols) * (tw + gap), ty = y + (n / cols) * (th + gap);
-                ++n;
-                ThumbTile(dc, i, {x, ty, x + tw, ty + th});
-            }
-            y += ((n + cols - 1) / cols) * (th + gap);
         }
-        return y;
+        // Pulpit i okna (dawna osobna zakładka) + rozmiar czcionki Terminala — przeniesione tu
+        y += 22.f;
+        Label(dc, L"PULPIT I OKNA", L, y);
+        y += 24.f;
+        const D2D1_RECT_F dots = Card(dc, y, 2);
+        Toggle(dc, dots, 0, L"Kropki macOS w oknach programów",
+               L"Czerwona, żółta i zielona kropka zamiast przycisków zamknij / minimalizuj / maksymalizuj",
+               Settings::GetBool(L"windowDots", true), 0);
+        Fill(dc, {dots.left + 18.f, dots.top + kRowH, dots.right - 18.f, dots.top + kRowH + 1.f}, White(0.06f));
+        Toggle(dc, dots, 1, L"Panel statystyk na pulpicie",
+               L"Procesor, pamięć, dysk i sieć obok panelu aplikacji", Settings::GetBool(L"showStats", true), 5);
+        y = dots.bottom + 22.f;
+        Label(dc, L"ROZMIAR CZCIONKI (TERMINAL)", L, y);
+        y += 24.f;
+        y = FontSizeCard(dc, y);
+        Text(dc, L"Panel aplikacji na pulpicie: kliknij „+”, aby przypiąć program. PPM na kafelku → Usuń z panelu.", descFormat_.Get(),
+             {L, y, R, y + 20.f}, White(0.55f));
+        return y + 30.f;
+    }
+
+    // Karta „Rozmiar czcionki” (Terminal) — używana w Personalizacji
+    float FontSizeCard(ID2D1DeviceContext* dc, float y) {
+        const D2D1_RECT_F card = Card(dc, y, 1);
+        const D2D1_RECT_F row{card.left, card.top, card.right, card.top + kRowH};
+        Text(dc, L"Rozmiar czcionki Terminala", titleFormat_.Get(), {row.left + 18.f, row.top + 12.f, row.right - 300.f, row.top + 32.f}, White(0.95f));
+        Text(dc, L"Też w terminalu: Ctrl + kółko myszy, Ctrl + 0 przywraca 14", descFormat_.Get(),
+             {row.left + 18.f, row.top + 32.f, row.right - 300.f, row.top + 52.f}, White(0.5f));
+        const int size = std::clamp(_wtoi(Settings::Get(L"terminalFontSize", L"14").c_str()), 8, 32);
+        const D2D1_RECT_F minus{row.right - 150.f, row.top + 16.f, row.right - 118.f, row.top + 48.f};
+        const D2D1_RECT_F plus{row.right - 50.f, row.top + 16.f, row.right - 18.f, row.top + 48.f};
+        Button(dc, minus, L"−", HitId(HitKind::FontMinus, 0));
+        Button(dc, plus, L"+", HitId(HitKind::FontPlus, 0));
+        Text(dc, std::to_wstring(size) + L" pt", buttonFormat_.Get(), {minus.right, row.top, plus.left, row.bottom}, White(0.95f));
+        AddHit(minus, HitKind::FontMinus, 0);
+        AddHit(plus, HitKind::FontPlus, 0);
+        return card.bottom + 22.f;
+    }
+
+    float PaintAccounts(ID2D1DeviceContext* dc, float y) {
+        const float L = kSideW + kPad, R = widthDip_ - kPad;
+        const D2D1_RECT_F card{L, y, R, y + 150.f};
+        Fill(dc, card, White(0.05f), 12.f);
+        brush_->SetColor(White(0.08f));
+        dc->DrawRoundedRectangle(D2D1::RoundedRect({card.left + 0.5f, card.top + 0.5f, card.right - 0.5f, card.bottom - 0.5f}, 12.f, 12.f), brush_.Get(), 1.f);
+        Text(dc, L"\xE77B", glyphBigFormat_.Get(), {card.left, card.top + 24.f, card.right, card.top + 64.f}, kAccent);
+        Text(dc, L"Konto Veyra — w budowie", titleFormat_.Get(), {card.left, card.top + 70.f, card.right, card.top + 94.f}, White(0.95f));
+        Text(dc, L"Wkrótce: logowanie do konta Veyra i zapisywanie ustawień, tapet i układu w chmurze.",
+             wrapFormat_.Get(), {card.left + 40.f, card.top + 96.f, card.right - 40.f, card.top + 140.f}, White(0.55f));
+        return card.bottom + 20.f;
+    }
+
+    float PaintMouse(ID2D1DeviceContext* dc, float y) {
+        const float L = kSideW + kPad, R = widthDip_ - kPad;
+        Label(dc, L"KURSOR I WSKAŹNIK", L, y);
+        y += 24.f;
+        const D2D1_RECT_F card = Card(dc, y, 2);
+        Toggle(dc, card, 0, L"Kursor w stylu Veyry",
+               L"Ciemny grafit, biały obrys i akcent #61B3FF zamiast standardowego kursora Windows",
+               Settings::GetBool(L"veyraCursor", true), 6);
+        Fill(dc, {card.left + 18.f, card.top + kRowH, card.right - 18.f, card.top + kRowH + 1.f}, White(0.06f));
+        Toggle(dc, card, 1, L"„Potrząśnij, aby znaleźć”",
+               L"Gdy szybko potrząśniesz myszą w jednym miejscu, kursor na chwilę się powiększa (jak w macOS)",
+               Settings::GetBool(L"shakeToFind", true), 7);
+        y = card.bottom + 22.f;
+
+        Label(dc, L"WIELKOŚĆ POWIĘKSZENIA KURSYRA", L, y);
+        y += 24.f;
+        const D2D1_RECT_F scaleCard = Card(dc, y, 1);
+        const D2D1_RECT_F row{scaleCard.left, scaleCard.top, scaleCard.right, scaleCard.top + kRowH};
+        Text(dc, L"Rozmiar powiększonego kursora", titleFormat_.Get(), {row.left + 18.f, row.top + 12.f, row.right - 350.f, row.top + 32.f}, White(0.95f));
+        Text(dc, L"Wybierz stopień powiększenia podczas potrząsania myszą", descFormat_.Get(), {row.left + 18.f, row.top + 32.f, row.right - 350.f, row.top + 52.f}, White(0.5f));
+
+        const int curScale = std::clamp(_wtoi(Settings::Get(L"shakeScale", L"96").c_str()), 48, 128);
+
+        struct ScaleOption { int scale; const wchar_t* label; };
+        const ScaleOption options[] = {
+            {64, L"Standard (64 px)"},
+            {96, L"Duży (96 px)"},
+            {128, L"Maksymalny (128 px)"}
+        };
+
+        float bx = row.right - 334.f;
+        const float bw = 104.f, bh = 32.f, by = row.top + 16.f;
+        for (const auto& opt : options) {
+            const D2D1_RECT_F btnRect{bx, by, bx + bw, by + bh};
+            const bool active = (curScale == opt.scale) || (opt.scale == 96 && curScale != 64 && curScale != 128);
+            const bool hot = hover_ == HitId(HitKind::MouseScale, opt.scale);
+            Fill(dc, btnRect, active ? kAccent : White(hot ? 0.14f : 0.08f), 8.f);
+            Text(dc, opt.label, buttonFormat_.Get(), btnRect, active ? kOnAccent : White(0.95f));
+            AddHit(btnRect, HitKind::MouseScale, opt.scale);
+            bx += bw + 8.f;
+        }
+
+        y = scaleCard.bottom + 20.f;
+        Text(dc, L"Wskazówka: kursor powiększa się natychmiast po dynamicznym potrząśnięciu myszą na ekranie.", descFormat_.Get(),
+             {L, y, R, y + 20.f}, White(0.55f));
+        return y + 30.f;
     }
 
     // Miniatura tapety z obramowaniem bieżącej / najechanej (mutex_ trzymany przez wołającego)
@@ -484,44 +594,16 @@ protected:
         return y;
     }
 
-    float PaintDesktop(ID2D1DeviceContext* dc, float y) {
-        Label(dc, L"OKNA", kSideW + kPad, y);
-        y += 24.f;
-        const D2D1_RECT_F card = Card(dc, y, 1);
-        Toggle(dc, card, 0, L"Kropki macOS w oknach programów", L"Czerwona, żółta i zielona kropka zamiast przycisków zamknij / minimalizuj / maksymalizuj",
-               Settings::GetBool(L"windowDots", true), 0);
-        y = card.bottom + 22.f;
-        Label(dc, L"WSKAZÓWKA", kSideW + kPad, y);
-        y += 24.f;
-        Text(dc, L"Panel aplikacji na pulpicie: kliknij „+”, aby przypiąć program. PPM na kafelku → Usuń z panelu.", descFormat_.Get(),
-             {kSideW + kPad, y, widthDip_ - kPad, y + 20.f}, White(0.55f));
-        return y + 30.f;
-    }
-
     float PaintApps(ID2D1DeviceContext* dc, float y) {
-        Label(dc, L"TERMINAL", kSideW + kPad, y);
-        y += 24.f;
-        const D2D1_RECT_F card = Card(dc, y, 1);
-        const D2D1_RECT_F row{card.left, card.top, card.right, card.top + kRowH};
-        Text(dc, L"Rozmiar czcionki", titleFormat_.Get(), {row.left + 18.f, row.top + 12.f, row.right - 300.f, row.top + 32.f}, White(0.95f));
-        Text(dc, L"Też w terminalu: Ctrl + kółko myszy, Ctrl + 0 przywraca 14", descFormat_.Get(),
-             {row.left + 18.f, row.top + 32.f, row.right - 300.f, row.top + 52.f}, White(0.5f));
-        const int size = std::clamp(_wtoi(Settings::Get(L"terminalFontSize", L"14").c_str()), 8, 32);
-        const D2D1_RECT_F minus{row.right - 150.f, row.top + 16.f, row.right - 118.f, row.top + 48.f};
-        const D2D1_RECT_F plus{row.right - 50.f, row.top + 16.f, row.right - 18.f, row.top + 48.f};
-        Button(dc, minus, L"−", HitId(HitKind::FontMinus, 0));
-        Button(dc, plus, L"+", HitId(HitKind::FontPlus, 0));
-        Text(dc, std::to_wstring(size) + L" pt", buttonFormat_.Get(), {minus.right, row.top, plus.left, row.bottom}, White(0.95f));
-        AddHit(minus, HitKind::FontMinus, 0);
-        AddHit(plus, HitKind::FontPlus, 0);
-        y = card.bottom + 22.f;
         Label(dc, L"APLIKACJE VEYRY", kSideW + kPad, y);
         y += 24.f;
         const wchar_t* apps[][3] = {{L"Terminal", L"Konsola w stylu Linuksa", L"exploder-terminal.exe"},
                                     {L"Kalkulator", L"Z historią obliczeń", L"exploder-calc.exe"},
-                                    {L"Sklep", L"Programy instalowane jednym kliknięciem", L"exploder-store.exe"}};
-        const D2D1_RECT_F list = Card(dc, y, 3);
-        for (int i = 0; i < 3; ++i) {
+                                    {L"Sklep", L"Programy instalowane jednym kliknięciem", L"exploder-store.exe"},
+                                    {L"Menedżer zadań", L"Procesy, wydajność, autostart", L"exploder-taskmgr.exe"}};
+        const int appCount = static_cast<int>(std::size(apps));
+        const D2D1_RECT_F list = Card(dc, y, appCount);
+        for (int i = 0; i < appCount; ++i) {
             const D2D1_RECT_F r{list.left, list.top + i * kRowH, list.right, list.top + (i + 1) * kRowH};
             if (i) Fill(dc, {r.left + 18.f, r.top, r.right - 18.f, r.top + 1.f}, White(0.06f));
             Text(dc, apps[i][0], titleFormat_.Get(), {r.left + 18.f, r.top + 12.f, r.right - 140.f, r.top + 32.f}, White(0.95f));
@@ -578,7 +660,11 @@ protected:
     float PaintSystem(ID2D1DeviceContext* dc, float y) {
         Label(dc, L"POWŁOKA", kSideW + kPad, y);
         y += 24.f;
-        const D2D1_RECT_F card = Card(dc, y, 2);
+        const D2D1_RECT_F card = Card(dc, y, 3);
+        Toggle(dc, card, 2, L"Menedżer zadań Veyry zamiast systemowego",
+               L"Ctrl+Shift+Esc, Ctrl+Alt+Del → Menedżer zadań i taskmgr.exe otwierają Menedżer Veyry. Wymaga uprawnień administratora",
+               taskmgrVeyra_, 4);
+        Fill(dc, {card.left + 18.f, card.top + 2 * kRowH, card.right - 18.f, card.top + 2 * kRowH + 1.f}, White(0.06f));
         Toggle(dc, card, 1, L"Kalkulator Veyry zamiast Kalkulatora Windows",
                L"calc.exe (Win+R, skróty, klawisz Kalkulator) otwiera Kalkulator Veyry. Wymaga uprawnień administratora", calcVeyra_, 2);
         Fill(dc, {card.left + 18.f, card.top + kRowH, card.right - 18.f, card.top + kRowH + 1.f}, White(0.06f));
@@ -899,7 +985,7 @@ protected:
 
     // ---------------- Interakcja ----------------
     enum class HitKind { Section, Wallpaper, Toggle, FontMinus, FontPlus, OpenApp, WinLink, GitHub, CheckUpdate, DoUpdate, PickWallpaper, Scale,
-                         Monitor, ApplyLayout, ResetLayout, WindowsDisplay, ResMenu, HzMenu, ModeKeep, ModeRevert, Uninstall };
+                         Monitor, ApplyLayout, ResetLayout, WindowsDisplay, ResMenu, HzMenu, ModeKeep, ModeRevert, Uninstall, MouseScale };
     struct Hit {
         D2D1_RECT_F rect;
         int id;
@@ -908,7 +994,7 @@ protected:
     void AddHit(const D2D1_RECT_F& r, HitKind k, int i) { hits_.push_back({r, HitId(k, i)}); }
     int HitAt(D2D1_POINT_2F p) const {
         for (auto it = hits_.rbegin(); it != hits_.rend(); ++it)
-            if (Inside(it->rect, p) && (p.x < kSideW || p.y >= 0.f)) return it->id;
+            if (Inside(it->rect, p) && (p.x < kSideW || p.y >= titleH_)) return it->id;  // treść schowana pod paskiem tytułu
         return -1;
     }
 
@@ -995,9 +1081,15 @@ protected:
             } else if (i == 3) {
                 Settings::SetBool(L"autoUpdateCheck", !Settings::GetBool(L"autoUpdateCheck", true));
                 Broadcast();
+            } else if (i == 5) {
+                Settings::SetBool(L"showStats", !Settings::GetBool(L"showStats", true));
+                Broadcast();
             } else if (i == 2) {
                 if (SetCalcVeyra(!calcVeyra_)) calcVeyra_ = CalcIsVeyra();
                 else SetTimer(hwnd_, kCalcTimer, 1500, nullptr);  // po zgodzie UAC sprawdzamy ponownie
+            } else if (i == 4) {
+                if (SetTaskMgrVeyra(!taskmgrVeyra_)) taskmgrVeyra_ = TaskMgrIsVeyra();
+                else SetTimer(hwnd_, kCalcTimer, 1500, nullptr);
             } else if (i == 1) {
                 if (!shellVeyra_ && !confirmShell_) {  // włączenie wymaga drugiego kliknięcia
                     confirmShell_ = true;
@@ -1010,6 +1102,12 @@ protected:
                 } else {
                     shellError_ = L"Nie udało się zapisać ustawienia w rejestrze.";
                 }
+            } else if (i == 6) {
+                Settings::SetBool(L"veyraCursor", !Settings::GetBool(L"veyraCursor", true));
+                Broadcast();
+            } else if (i == 7) {
+                Settings::SetBool(L"shakeToFind", !Settings::GetBool(L"shakeToFind", true));
+                Broadcast();
             }
             break;
         case HitKind::FontMinus:
@@ -1019,9 +1117,14 @@ protected:
             Broadcast();
             break;
         }
+        case HitKind::MouseScale:
+            Settings::Set(L"shakeScale", std::to_wstring(i));
+            Broadcast();
+            break;
         case HitKind::OpenApp: {
-            static const wchar_t* exes[] = {L"exploder-terminal.exe", L"exploder-calc.exe", L"exploder-store.exe"};
-            ShellExecuteW(nullptr, L"open", (ExeDir() + exes[i]).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            static const wchar_t* exes[] = {L"exploder-terminal.exe", L"exploder-calc.exe", L"exploder-store.exe", L"exploder-taskmgr.exe"};
+            if (i >= 0 && i < static_cast<int>(std::size(exes)))
+                ShellExecuteW(nullptr, L"open", (ExeDir() + exes[i]).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             break;
         }
         case HitKind::WinLink:
@@ -1109,6 +1212,7 @@ protected:
         if (id == kCalcTimer) {
             KillTimer(hwnd_, kCalcTimer);
             calcVeyra_ = CalcIsVeyra();
+            taskmgrVeyra_ = TaskMgrIsVeyra();
             Redraw();
             return;
         }
@@ -1242,8 +1346,8 @@ protected:
     // Powłoka i terminal przeładowują settings.txt
     static void Broadcast() { PostMessageW(HWND_BROADCAST, Settings::ChangedMessage(), 0, 0); }
 
-    ComPtr<IDWriteTextFormat> headerFormat_, bigCenterFormat_, appFormat_, sideFormat_, titleFormat_, descFormat_, buttonFormat_, glyphFormat_, sectionLabelFormat_,
-        wrapFormat_;
+    ComPtr<IDWriteTextFormat> headerFormat_, bigCenterFormat_, appFormat_, sideFormat_, titleFormat_, descFormat_, buttonFormat_, glyphFormat_,
+        glyphBigFormat_, sectionLabelFormat_, wrapFormat_;
     std::vector<Hit> hits_;
     int section_ = Personalize, hover_ = -1;
     float scroll_ = 0.f, contentH_ = 0.f;
@@ -1265,7 +1369,7 @@ protected:
         int width = 0, height = 0, hz = 0;
     } modeRevert_;
     int modeSeconds_ = 0;
-    bool shellVeyra_ = false, confirmShell_ = false, calcVeyra_ = false;
+    bool shellVeyra_ = false, confirmShell_ = false, calcVeyra_ = false, taskmgrVeyra_ = false;
     int memoryMb_ = -1;
     // Aktualizacje
     std::thread checkThread_;

@@ -53,14 +53,7 @@ inline std::vector<Row> Collect() {
     if (GetComputerNameExW(ComputerNameDnsHostname, name, &n)) rows.push_back({L"Nazwa komputera", name});
     // Procesor
     std::wstring cpu = Reg(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", L"ProcessorNameString");
-    DWORD len = 0;
-    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
-    std::vector<BYTE> buf(len);
-    int cores = 0;
-    if (len && GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buf.data()), &len))
-        for (DWORD off = 0; off < len; off += reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buf.data() + off)->Size) ++cores;
-    const DWORD threads = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-    rows.push_back({L"Procesor", cpu + L"  ·  " + std::to_wstring(cores) + L" rdzeni, " + std::to_wstring(threads) + L" wątków"});
+    rows.push_back({L"Procesor", cpu});  // bez liczby rdzeni/wątków (mniej szczegółów)
     // Pamięć
     MEMORYSTATUSEX ms{sizeof(ms)};
     GlobalMemoryStatusEx(&ms);
@@ -84,19 +77,7 @@ inline std::vector<Row> Collect() {
     if (board.size() > 1) rows.push_back({L"Płyta główna", board});
     const std::wstring biosVer = Reg(HKEY_LOCAL_MACHINE, bios, L"BIOSVendor") + L" " + Reg(HKEY_LOCAL_MACHINE, bios, L"BIOSVersion");
     if (biosVer.size() > 1) rows.push_back({L"BIOS", biosVer});
-    // Dyski lokalne
-    const DWORD drives = GetLogicalDrives();
-    for (int i = 0; i < 26; ++i) {
-        if (!(drives & (1u << i))) continue;
-        const wchar_t root[] = {static_cast<wchar_t>(L'A' + i), L':', L'\\', 0};
-        if (GetDriveTypeW(root) != DRIVE_FIXED) continue;
-        ULARGE_INTEGER freeBytes{}, total{};
-        if (!GetDiskFreeSpaceExW(root, nullptr, &total, &freeBytes)) continue;
-        wchar_t label[MAX_PATH + 1]{};
-        GetVolumeInformationW(root, label, ARRAYSIZE(label), nullptr, nullptr, nullptr, nullptr, 0);
-        rows.push_back({std::wstring(L"Dysk ") + root[0] + L":", (*label ? std::wstring(label) + L"  ·  " : L"") + Gb(static_cast<double>(total.QuadPart)) +
-                                                                      L", wolne " + Gb(static_cast<double>(freeBytes.QuadPart))});
-    }
+    // (Dyski pominięte — mniej szczegółów)
     return rows;
 }
 }  // namespace SystemInfo

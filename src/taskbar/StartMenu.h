@@ -30,7 +30,11 @@ private:
     D2D1_RECT_F PowerRect(int i) const;
     void Run(Action a);
 
+    ComPtr<ID2D1Bitmap> LoadUserPicture(ID2D1DeviceContext* dc);  // zdjęcie konta Windows; nullptr = brak
+
     std::wstring user_;
     ComPtr<IDWriteTextFormat> centered_;
+    ComPtr<ID2D1Bitmap> picture_;
+    bool pictureTried_ = false;
     int hover_ = -1, hoverPower_ = -1;
 };

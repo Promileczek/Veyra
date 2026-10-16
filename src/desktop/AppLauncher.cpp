@@ -36,8 +36,12 @@ std::wstring PinnedPath() {
 
 ComPtr<IShellItem> ItemFromKey(const std::wstring& key) {
     ComPtr<IShellItem> item;
-    if (FAILED(SHCreateItemFromParsingName(key.c_str(), nullptr, IID_PPV_ARGS(&item)))) return nullptr;
-    return item;
+    if (SUCCEEDED(SHCreateItemFromParsingName(key.c_str(), nullptr, IID_PPV_ARGS(&item)))) return item;
+    // Starsze wpisy zapisane samą nazwą aplikacji (np. „Brave”) — próbujemy jako AppsFolder\<AUMID>
+    if (key.find(L'\\') == std::wstring::npos && key.rfind(L"::{", 0) != 0 &&
+        SUCCEEDED(SHCreateItemFromParsingName((L"shell:AppsFolder\\" + key).c_str(), nullptr, IID_PPV_ARGS(&item))))
+        return item;
+    return nullptr;
 }
 }  // namespace
 
@@ -65,18 +69,34 @@ void AppLauncher::Init(Graphics& g, std::function<void()> requestRedraw, std::fu
 }
 
 bool AppLauncher::MakeEntry(ComPtr<IShellItem> item, Entry& out) {
-    PWSTR name = nullptr, key = nullptr;
+    PWSTR name = nullptr;
     if (!item || FAILED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &name))) return false;
-    if (FAILED(item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &key))) {
-        CoTaskMemFree(name);
-        return false;
-    }
     out.name = name;
     out.lower = Lower(out.name);
+    CoTaskMemFree(name);
+
+    // Klucz musi dać się później odtworzyć przez SHCreateItemFromParsingName (zapis w launcher.txt).
+    // Ścieżka „desktop absolute parsing” dla programów ze Start/AppsFolder (np. Brave) bywa samą nazwą
+    // („Brave”) — nieodtwarzalną. Dlatego sprawdzamy odtwarzalność, a dla aplikacji używamy shell:AppsFolder\<AUMID>.
+    auto roundTrips = [](const std::wstring& k) {
+        ComPtr<IShellItem> rt;
+        return !k.empty() && SUCCEEDED(SHCreateItemFromParsingName(k.c_str(), nullptr, IID_PPV_ARGS(&rt)));
+    };
+    std::wstring key;
+    if (PWSTR abs = nullptr; SUCCEEDED(item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &abs)) && abs) {
+        key = abs;
+        CoTaskMemFree(abs);
+    }
+    if (!roundTrips(key)) {  // aplikacja z AppsFolder: klucz z AUMID (parent-relative parsing)
+        if (PWSTR aumid = nullptr; SUCCEEDED(item->GetDisplayName(SIGDN_PARENTRELATIVEPARSING, &aumid)) && aumid) {
+            const std::wstring cand = L"shell:AppsFolder\\" + std::wstring(aumid);
+            CoTaskMemFree(aumid);
+            if (roundTrips(cand)) key = cand;
+        }
+    }
+    if (!roundTrips(key)) return false;  // nie zapiszemy klucza, którego nie da się wczytać
     out.key = key;
     out.item = std::move(item);
-    CoTaskMemFree(name);
-    CoTaskMemFree(key);
     return true;
 }
 

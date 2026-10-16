@@ -12,6 +12,7 @@ struct DesktopItem {
     std::wstring name;  // nazwa wyświetlana (rozszerzenie wg ustawień Windows)
     int col = -1, row = -1;
     bool selected = false;
+    bool folder = false;  // zwykły folder (nie Kosz) → własna ikona Veyry
     bool iconLoaded = false;
     ComPtr<ID2D1Bitmap> icon;
     ComPtr<IDWriteTextLayout> label;

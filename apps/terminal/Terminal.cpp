@@ -350,9 +350,38 @@ protected:
         selEnd_ = {row, b};
         Redraw();
     }
-    void OnWheel(int delta, D2D1_POINT_2F) override {
+    // Kółko: programy pełnoekranowe (np. Claude Code) przewijają się same, ale ConPTY z Windows 10 nie przekazuje nam
+    // ich ekranu ani trybu myszy. Program, który sam czyta sekwencje VT (tryb wejścia konsoli), dostaje kółko jako
+    // sekwencję myszy SGR; pozostałe (cmd, PowerShell) — przewijamy historię Terminala.
+    void OnWheel(int delta, D2D1_POINT_2F p) override {
         if (GetKeyState(VK_CONTROL) < 0) return Zoom(delta > 0 ? 1.f : -1.f);
-        ScrollView(delta > 0 ? 3 : -3);
+        const int lines = delta > 0 ? 3 : -3;
+        if (viewOffset_ > 0 || !AppReadsVt()) return ScrollView(lines);
+        const int row = std::clamp(static_cast<int>((p.y - titleH_ - 6.f) / cellH_), 0, rows_ - 1) + 1;
+        const int col = std::clamp(static_cast<int>((p.x - kPad) / cellW_), 0, cols_ - 1) + 1;
+        // ESC osobno: cała sekwencja naraz to dla ConPTY zdarzenie myszy, które połyka; znaki osobno trafiają do programu
+        Send("\x1b");
+        Sleep(8);
+        Send("[<" + std::to_string(delta > 0 ? 64 : 65) + ";" + std::to_string(col) + ";" + std::to_string(row) + "M");
+        Sleep(8);
+    }
+    // Program na pierwszym planie konsoli czyta wejście jako sekwencje VT (ENABLE_VIRTUAL_TERMINAL_INPUT) — pytamy
+    // konsolę ConPTY (chwilowe podłączenie); wynik ważny pół sekundy (kolejne skoki kółka)
+    bool AppReadsVt() {
+        const DWORD now = GetTickCount();
+        if (now - vtModeChecked_ < 500) return vtInput_;
+        vtModeChecked_ = now;
+        vtInput_ = false;
+        const DWORD pid = process_ ? GetProcessId(process_) : 0;
+        if (!pid || !AttachConsole(pid)) return vtInput_;
+        const HANDLE in = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        DWORD mode = 0;
+        if (in != INVALID_HANDLE_VALUE) {
+            if (GetConsoleMode(in, &mode)) vtInput_ = (mode & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0;
+            CloseHandle(in);
+        }
+        FreeConsole();
+        return vtInput_;
     }
 
 private:
@@ -751,7 +780,9 @@ private:
             break;
         case 'S': ScrollUp(P(0, 1)); break;
         case 'T': ScrollDown(P(0, 1)); break;
-        case 'm': Sgr(); break;
+        case 'm':
+            if (privateMark_ == 0) Sgr();  // ESC[>4m (modifyOtherKeys) to nie podkreślenie
+            break;
         case 'r':
             top_ = std::clamp(P(0, 1) - 1, 0, rows_ - 1);
             bottom_ = std::clamp(P(1, rows_) - 1, top_, rows_ - 1);
@@ -927,6 +958,8 @@ private:
     Cell pen_, savedPen_;
     std::pair<int, int> saved_{0, 0}, savedMain_{0, 0};
     int viewOffset_ = 0;
+    DWORD vtModeChecked_ = 0;
+    bool vtInput_ = false;
 
     // Parser
     State state_ = State::Ground;

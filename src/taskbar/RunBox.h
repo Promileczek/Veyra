@@ -7,7 +7,11 @@
 // Prawdziwy cmd.exe w systemie zostaje bez zmian (skrypty, Terminal Veyry pod spodem).
 class RunBox : public Popup {
 public:
-    void Open(UINT dpi);  // na środku ekranu, nad dockiem
+    RunBox() {  // zwykłe okno: przesuwanie, minimalizacja, zamykanie (Popup::windowMode_)
+        windowMode_ = true;
+        windowTitle_ = L"Uruchom";
+    }
+    void Open(UINT dpi);  // na środku ekranu, nad dockiem; otwarte — na wierzch
 
 protected:
     D2D1_SIZE_F ContentSize() override { return {470.f, 168.f}; }

@@ -76,8 +76,7 @@ public:
         o.title = L"Kalkulator";
         o.width = 340.f;
         o.height = 580.f;
-        o.minWidth = 300.f;
-        o.minHeight = 500.f;
+        o.resizable = false;  // jeden, stały rozmiar — bez maksymalizacji (zielona kropka, F11, dwuklik w pasek)
         if (!Create(inst, g, o)) return false;
         exprFormat_ = MakeFormat(L"Segoe UI", 15.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
         historyFormat_ = MakeFormat(L"Segoe UI", 12.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);

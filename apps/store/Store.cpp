@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <functional>
+#include <regex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -535,16 +536,28 @@ private:
                 const int code = RunWinget(std::wstring(L"install --id ") + kApps[i].id +
                                                L" -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity",
                                            [&](const std::string& chunk) {
-                                               // Ostatnie "NN%" w wyjściu = postęp pobierania
+                                               auto report = [&](int pct) {
+                                                   pct = std::clamp(pct, 0, 100);
+                                                   if (pct == last) return;
+                                                   last = pct;
+                                                   PostMessageW(hwnd, WM_INSTALL_PROGRESS, i, pct);
+                                               };
+                                               // "NN%" w wyjściu = postęp pobierania
                                                for (size_t p = chunk.find('%'); p != std::string::npos; p = chunk.find('%', p + 1)) {
                                                    size_t s = p;
                                                    while (s > 0 && isdigit(static_cast<unsigned char>(chunk[s - 1]))) --s;
-                                                   if (s == p) continue;
-                                                   const int pct = std::clamp(atoi(chunk.substr(s, p - s).c_str()), 0, 100);
-                                                   if (pct != last) {
-                                                       last = pct;
-                                                       PostMessageW(hwnd, WM_INSTALL_PROGRESS, i, pct);
-                                                   }
+                                                   if (s != p) report(atoi(chunk.substr(s, p - s).c_str()));
+                                               }
+                                               // Pobieranie ze znanym rozmiarem: "10.5 MB / 50.2 MB" zamiast procentów
+                                               static const std::regex sizes(R"((\d+(?:[.,]\d+)?)\s*(B|KB|MB|GB)\s*/\s*(\d+(?:[.,]\d+)?)\s*(B|KB|MB|GB))");
+                                               auto bytes = [](std::string n, const std::string& unit) {
+                                                   std::replace(n.begin(), n.end(), ',', '.');
+                                                   const double mult = unit == "GB" ? 1e9 : unit == "MB" ? 1e6 : unit == "KB" ? 1e3 : 1.0;
+                                                   return atof(n.c_str()) * mult;
+                                               };
+                                               for (std::sregex_iterator it(chunk.begin(), chunk.end(), sizes), end; it != end; ++it) {
+                                                   const double done = bytes((*it)[1], (*it)[2]), total = bytes((*it)[3], (*it)[4]);
+                                                   if (total > 0) report(static_cast<int>(done * 100.0 / total));
                                                }
                                            });
                 PostMessageW(hwnd, WM_INSTALL_DONE, i, code);

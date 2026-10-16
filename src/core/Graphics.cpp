@@ -60,6 +60,39 @@ bool Surface::Create(Graphics& g, HWND hwnd, UINT width, UINT height) {
     return SUCCEEDED(dcomp_->Commit());
 }
 
+void Surface::Appear(float seconds, float fromScale, float cx, float cy, float fromDy) {
+    if (!visual_ || !dcomp_ || seconds <= 0.f) return;
+    // ease-out (sześcienne): e(t) = 3u − 3u² + u³, u = t/d → wartość = a + b·e(t)
+    const float d = seconds;
+    auto ramp = [&](float from, float to) -> ComPtr<IDCompositionAnimation> {
+        ComPtr<IDCompositionAnimation> a;
+        if (FAILED(dcomp_->CreateAnimation(&a))) return nullptr;
+        const float b = to - from;
+        a->AddCubic(0.0, from, 3.f * b / d, -3.f * b / (d * d), b / (d * d * d));
+        a->End(d, to);
+        return a;
+    };
+    ComPtr<IDCompositionEffectGroup> effect;
+    ComPtr<IDCompositionScaleTransform> scale;
+    ComPtr<IDCompositionTranslateTransform> move;
+    ComPtr<IDCompositionTransform> group;
+    const auto opacity = ramp(0.f, 1.f), size = ramp(fromScale, 1.f), offset = ramp(fromDy, 0.f);
+    if (!opacity || !size || !offset || FAILED(dcomp_->CreateEffectGroup(&effect)) || FAILED(dcomp_->CreateScaleTransform(&scale)) ||
+        FAILED(dcomp_->CreateTranslateTransform(&move)))
+        return;
+    effect->SetOpacity(opacity.Get());
+    scale->SetCenterX(cx);
+    scale->SetCenterY(cy);
+    scale->SetScaleX(size.Get());
+    scale->SetScaleY(size.Get());
+    move->SetOffsetY(offset.Get());
+    IDCompositionTransform* parts[] = {scale.Get(), move.Get()};
+    if (FAILED(dcomp_->CreateTransformGroup(parts, 2, &group))) return;
+    visual_->SetEffect(effect.Get());
+    visual_->SetTransform(group.Get());
+    dcomp_->Commit();
+}
+
 bool Surface::CreateTarget() {
     ComPtr<IDXGISurface> buffer;
     if (FAILED(swap_->GetBuffer(0, IID_PPV_ARGS(&buffer)))) return false;

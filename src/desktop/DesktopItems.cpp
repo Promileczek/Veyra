@@ -23,6 +23,9 @@ void Add(ComPtr<IShellItem> item, std::vector<DesktopItem>& out) {
     DesktopItem d;
     d.key = ItemKey(item.Get());
     d.name = GetName(item.Get(), SIGDN_NORMALDISPLAY);
+    SFGAOF attrs = 0;
+    item->GetAttributes(SFGAO_FOLDER | SFGAO_STREAM, &attrs);
+    d.folder = (attrs & SFGAO_FOLDER) && !(attrs & SFGAO_STREAM) && !IsRecycleBin(d);  // .zip to plik; Kosz ma swoją ikonę
     d.item = std::move(item);
     out.push_back(std::move(d));
 }
@@ -131,7 +134,7 @@ ComPtr<IWICBitmapSource> LoadItemImage(IShellItem* item, int px, IWICImagingFact
         return nullptr;
     ComPtr<IWICBitmap> bmp;
     const HRESULT hr = wic->CreateBitmapFromHBITMAP(
-        hbm, nullptr, HasAlpha(hbm) ? WICBitmapUsePremultipliedAlpha : WICBitmapIgnoreAlpha, &bmp);
+        hbm, nullptr, HasAlpha(hbm) ? WICBitmapUseAlpha : WICBitmapIgnoreAlpha, &bmp);
     DeleteObject(hbm);
     return SUCCEEDED(hr) ? ToPBGRA(wic, bmp.Get()) : nullptr;
 }

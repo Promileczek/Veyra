@@ -1,5 +1,6 @@
 #include "TopBar.h"
 #include "../core/Accent.h"
+#include "../core/Settings.h"
 #include "../core/UiScale.h"
 #include "../core/WorkArea.h"
 #include <shellapi.h>
@@ -47,7 +48,9 @@ bool TopBar::Create(HINSTANCE inst, Graphics& g) {
                             L"Exploder TopBar", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, inst, this);
     if (!hwnd_) return false;
     dpi_ = UiScale::Dpi(GetDpiForWindow(hwnd_));
-    if (!SetBackdrop(hwnd_, Backdrop::Acrylic, theme_.acrylicTint)) theme_.dockBackground.a = 0.95f;
+    // Bez akrylu DWM: wypełnia cały prostokąt okna (region go nie przycina) — w rogach poza zaokrągleniem było widać
+    // ciemną otoczkę. Pasek rysujemy sami, prawie nieprzezroczysty, jak dock.
+    theme_.dockBackground.a = 0.95f;
 
     IDWriteFactory* dw = g_->DWrite();
     if (FAILED(dw->CreateTextFormat(L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -81,6 +84,8 @@ bool TopBar::Create(HINSTANCE inst, Graphics& g) {
     volumePopup_.Create(inst, g, L"ExploderVolumePopup");
     networkPopup_.Init(network_);
     networkPopup_.Create(inst, g, L"ExploderNetworkPopup");
+    batteryToast_.Create(inst, g);
+    UpdateBattery();
     media_.Start(hwnd_, WM_MEDIA);
     SetTimer(hwnd_, kMediaPollTimer, 1500, nullptr);  // tryb zastępczy bez explorera (patrz MediaService.h)
     SetTimer(hwnd_, kStatusTimer, 5000, nullptr);
@@ -93,6 +98,7 @@ bool TopBar::Create(HINSTANCE inst, Graphics& g) {
 
 void TopBar::Destroy() {
     media_.Stop();
+    batteryToast_.Destroy();
     if (hwnd_) DestroyWindow(hwnd_);
     hwnd_ = nullptr;
 }
@@ -147,6 +153,7 @@ void TopBar::Layout() {
     const float H = heightDip_, W = widthDip_;
     netRect_ = {10.f, 4.f, 190.f, H - 4.f};
     volumeRect_ = {W - 86.f, 4.f, W - 10.f, H - 4.f};
+    batteryRect_ = hasBattery_ ? D2D1_RECT_F{volumeRect_.left - 74.f, 4.f, volumeRect_.left - 4.f, H - 4.f} : D2D1_RECT_F{};
 
     // Środek: okładka | tytuł — wykonawca | ⏮ ⏯ ⏭ | postęp — zwarty blok zawsze na środku: szerokość tytułu
     // dopasowana do tekstu (60–240), przyciski tuż za nim, pasek postępu tylko gdy znany czas utworu
@@ -319,10 +326,94 @@ void TopBar::Render() {
              {volumeRect_.left + 32.f, 0.f, volumeRect_.right, H}, theme_.text);
     }
 
+    if (hasBattery_) DrawBattery(dc);
+
     if (!surface_.End()) {
         surface_ = Surface{};
         SetTimer(hwnd_, kProgressTimer, 500, nullptr);  // spróbujemy ponownie
     }
+}
+
+// Stan baterii (GetSystemPowerStatus). Test bez laptopa: settings.txt "batteryTest=<procent>,<ładowanie 0/1>".
+void TopBar::UpdateBattery() {
+    bool has = false, charging = false;
+    int percent = -1;
+    if (const std::wstring test = Settings::Get(L"batteryTest"); !test.empty()) {
+        has = true;
+        percent = std::clamp(_wtoi(test.c_str()), 0, 100);
+        const size_t comma = test.find(L',');
+        charging = comma != std::wstring::npos && _wtoi(test.c_str() + comma + 1) != 0;
+    } else if (SYSTEM_POWER_STATUS ps{}; GetSystemPowerStatus(&ps) && ps.BatteryFlag != 128 && ps.BatteryFlag != 255 &&
+                                          ps.BatteryLifePercent <= 100) {
+        has = true;
+        percent = ps.BatteryLifePercent;
+        charging = ps.ACLineStatus == 1;
+    }
+    if (has != hasBattery_ || percent != batteryPercent_ || charging != charging_) {
+        const bool relayout = has != hasBattery_;
+        hasBattery_ = has;
+        batteryPercent_ = percent;
+        charging_ = charging;
+        if (relayout) Layout();
+        RequestRedraw();
+    }
+    if (!has) return;
+    auto notify = [this](wchar_t glyph, const std::wstring& title, const std::wstring& body) {
+        Notification::Content c;
+        c.glyph = glyph;
+        c.title = title;
+        c.body = body;
+        c.action = L"OK";
+        c.dismiss.clear();
+        batteryToast_.Show(c, dpi_);
+    };
+    if (charging) {
+        lastWarning_ = 101;
+        if (percent >= 100 && !fullNotified_) {
+            fullNotified_ = true;
+            notify(L'\xE73E', L"Bateria naładowana", L"Możesz odłączyć ładowarkę.");
+        }
+    } else {
+        fullNotified_ = false;
+        for (int threshold : {5, 10, 15})
+            if (percent <= threshold && lastWarning_ > threshold) {
+                lastWarning_ = threshold;
+                notify(L'\xE7BA', L"Bateria: " + std::to_wstring(percent) + L"%",
+                       threshold == 5 ? L"Bateria prawie się wyczerpała — podłącz ładowarkę teraz." : L"Podłącz ładowarkę.");
+                break;
+            }
+    }
+    if (percent < 95) fullNotified_ = false;
+}
+
+// Ikona baterii (rysowana — obrys, poziom, błyskawica przy ładowaniu) + procent
+void TopBar::DrawBattery(ID2D1DeviceContext* dc) {
+    const float H = heightDip_, x = batteryRect_.left + 6.f, cy = H / 2.f, w = 20.f, h = 10.f;
+    const bool low = !charging_ && batteryPercent_ <= 15;
+    const D2D1_COLOR_F color = low ? D2D1::ColorF(1.f, 0.42f, 0.38f) : theme_.text;
+    brush_->SetColor(color);
+    dc->DrawRoundedRectangle(D2D1::RoundedRect({x, cy - h / 2, x + w, cy + h / 2}, 2.f, 2.f), brush_.Get(), 1.2f);
+    dc->FillRoundedRectangle(D2D1::RoundedRect({x + w + 1.f, cy - 2.5f, x + w + 3.f, cy + 2.5f}, 1.f, 1.f), brush_.Get());
+    const float level = std::max(1.5f, (w - 4.f) * batteryPercent_ / 100.f);
+    brush_->SetColor(charging_ ? theme_.accent : color);
+    dc->FillRoundedRectangle(D2D1::RoundedRect({x + 2.f, cy - h / 2 + 2.f, x + 2.f + level, cy + h / 2 - 2.f}, 1.f, 1.f), brush_.Get());
+    if (charging_) {  // błyskawica na środku
+        ComPtr<ID2D1Factory> factory;
+        dc->GetFactory(&factory);
+        ComPtr<ID2D1PathGeometry> bolt;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (factory && SUCCEEDED(factory->CreatePathGeometry(&bolt)) && SUCCEEDED(bolt->Open(&sink))) {
+            const float bx = x + w / 2, by = cy;
+            sink->BeginFigure({bx + 1.5f, by - 6.f}, D2D1_FIGURE_BEGIN_FILLED);
+            const D2D1_POINT_2F pts[] = {{bx - 3.f, by + 1.f}, {bx - 0.2f, by + 1.f}, {bx - 1.5f, by + 6.f}, {bx + 3.f, by - 1.f}, {bx + 0.2f, by - 1.f}};
+            sink->AddLines(pts, 5);
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            sink->Close();
+            brush_->SetColor(theme_.text);
+            dc->FillGeometry(bolt.Get(), brush_.Get());
+        }
+    }
+    Text(std::to_wstring(batteryPercent_) + L"%", smallFormat_.Get(), {x + w + 7.f, 0.f, batteryRect_.right, H}, color);
 }
 
 int TopBar::HitTest(LPARAM lp) const {
@@ -415,6 +506,7 @@ LRESULT TopBar::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
                 RequestRedraw();
             }
             volume_.Refresh();
+            UpdateBattery();
         } else if (wp == kMediaPollTimer) {
             if (media_.UsesPolling()) media_.Poll();
         } else if (wp == kFullscreenTimer) {

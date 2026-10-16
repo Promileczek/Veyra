@@ -4,6 +4,8 @@
 
 // Szklane okienko wysuwane pod przyciskiem (głośność, sieć…). Aktywne po otwarciu — kliknięcie
 // gdziekolwiek indziej albo Esc je zamyka. Podklasa podaje rozmiar i rysuje zawartość (w DIP).
+// windowMode_ (ustawione przed Create, np. "Uruchom"): zwykłe okno Veyry — nieprzezroczyste, kropki w prawym górnym
+// rogu, przeciąganie za górny pas, minimalizacja do docka; nie znika po kliknięciu obok, Esc/kropka/Alt+F4 chowa.
 class Popup {
 public:
     virtual ~Popup() = default;
@@ -36,6 +38,8 @@ protected:
 
     HWND hwnd_ = nullptr;
     Graphics* g_ = nullptr;
+    bool windowMode_ = false;
+    const wchar_t* windowTitle_ = L"";  // tytuł okna (dock, Alt+Tab) w windowMode_
     UINT dpi_ = 96;
     D2D1_SIZE_F size_{};
     ComPtr<ID2D1SolidColorBrush> brush_;
@@ -52,9 +56,13 @@ private:
     void Place();
     void Render();
     D2D1_POINT_2F ToDip(LPARAM lp) const;
+    D2D1_POINT_2F Lights() const { return {size_.width - 58.f, 20.f}; }  // środek pierwszej kropki (windowMode_)
 
     Surface surface_;
     RECT anchor_{};
     bool trackingMouse_ = false;
     bool captured_ = false;
+    bool placed_ = false;       // windowMode_: pozycja wybrana — kolejne otwarcia tam, gdzie użytkownik je zostawił
+    bool active_ = true;        // windowMode_
+    bool hoverLights_ = false;  // windowMode_
 };

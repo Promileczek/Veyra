@@ -90,6 +90,7 @@ private:
     void ShowItemMenu(size_t index, POINT screen);
 
     int Columns() const;
+    float GridLeft() const;  // lewa krawędź siatki (wyśrodkowanej)
     D2D1_RECT_F CellRect(size_t index) const;  // z uwzględnieniem przewinięcia
     int ItemAt(D2D1_POINT_2F p) const;
     float ContentHeight() const;

@@ -139,11 +139,15 @@ void Notification::Render() {
     }
     // Przyciski
     actionRect_ = {kW - 16.f - 110.f, kH - 16.f - 30.f, kW - 16.f, kH - 16.f};
-    dismissRect_ = {actionRect_.left - 8.f - 90.f, actionRect_.top, actionRect_.left - 8.f, actionRect_.bottom};
+    // Bez tekstu „Później” (np. bateria) — tylko przycisk główny
+    dismissRect_ = content_.dismiss.empty() ? D2D1_RECT_F{}
+                                            : D2D1_RECT_F{actionRect_.left - 8.f - 90.f, actionRect_.top, actionRect_.left - 8.f, actionRect_.bottom};
     fill(actionRect_, hover_ == HitAction ? D2D1::ColorF(0.48f, 0.76f, 1.f) : kAccent, 8.f);
     text(content_.action, buttonFormat_.Get(), actionRect_, kOnAccent);
-    fill(dismissRect_, D2D1::ColorF(1.f, 1.f, 1.f, hover_ == HitDismiss ? 0.16f : 0.08f), 8.f);
-    text(content_.dismiss, buttonFormat_.Get(), dismissRect_, D2D1::ColorF(1.f, 1.f, 1.f, 0.9f));
+    if (!content_.dismiss.empty()) {
+        fill(dismissRect_, D2D1::ColorF(1.f, 1.f, 1.f, hover_ == HitDismiss ? 0.16f : 0.08f), 8.f);
+        text(content_.dismiss, buttonFormat_.Get(), dismissRect_, D2D1::ColorF(1.f, 1.f, 1.f, 0.9f));
+    }
     if (!surface_.End()) {
         surface_ = Surface{};
         brush_.Reset();
